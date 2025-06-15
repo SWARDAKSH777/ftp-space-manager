@@ -79,11 +79,59 @@ const ServersTab = () => {
   };
 
   const handleConnect = async (server: FtpServer) => {
-    // TODO: Implement connection functionality
-    toast({
-      title: "Connection functionality",
-      description: "FTP connection will be implemented via Edge Functions"
-    });
+    try {
+      toast({
+        title: "Testing connection...",
+        description: `Connecting to ${server.name}`
+      });
+
+      const { data, error } = await supabase.functions.invoke('ftp-operations', {
+        body: {
+          action: 'test_connection',
+          serverId: server.id
+        }
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        toast({
+          title: "Connection successful",
+          description: `Successfully connected to ${server.name}`
+        });
+        
+        // Log the activity
+        await supabase.from('activity_log').insert({
+          user_id: (await supabase.auth.getUser()).data.user?.id,
+          server_id: server.id,
+          action: 'connection_test',
+          details: { result: 'success' }
+        });
+      } else {
+        throw new Error(data.error || 'Connection failed');
+      }
+      
+      // Refresh servers to get updated status
+      fetchServers();
+    } catch (error: any) {
+      toast({
+        title: "Connection failed",
+        description: error.message,
+        variant: "destructive"
+      });
+
+      // Log the failed connection
+      try {
+        await supabase.from('activity_log').insert({
+          user_id: (await supabase.auth.getUser()).data.user?.id,
+          server_id: server.id,
+          action: 'connection_test',
+          details: { result: 'failed', error: error.message }
+        });
+      } catch (logError) {
+        console.error('Failed to log activity:', logError);
+      }
+    }
   };
 
   if (loading) {
