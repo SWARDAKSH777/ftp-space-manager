@@ -76,10 +76,16 @@ const StatisticsTab = () => {
       if (error && error.code !== 'PGRST116') throw error;
       
       if (data) {
-        setStats(data);
+        // Parse JSON fields safely
+        const parsedStats: ServerStats = {
+          ...data,
+          file_types: typeof data.file_types === 'object' && data.file_types !== null ? data.file_types as Record<string, number> : {},
+          size_distribution: typeof data.size_distribution === 'object' && data.size_distribution !== null ? data.size_distribution as Record<string, number> : {}
+        };
+        setStats(parsedStats);
       } else {
-        // Generate mock statistics for demo
-        await generateMockStatistics();
+        // Trigger statistics generation by scanning the server
+        await generateStatistics();
       }
     } catch (error: any) {
       toast({
@@ -92,42 +98,35 @@ const StatisticsTab = () => {
     }
   };
 
-  const generateMockStatistics = async () => {
-    const mockStats = {
-      server_id: selectedServerId,
-      total_files: Math.floor(Math.random() * 1000) + 100,
-      total_directories: Math.floor(Math.random() * 50) + 10,
-      total_size: Math.floor(Math.random() * 10000000000) + 1000000000, // 1-10GB
-      file_types: {
-        'txt': Math.floor(Math.random() * 50) + 10,
-        'pdf': Math.floor(Math.random() * 30) + 5,
-        'jpg': Math.floor(Math.random() * 100) + 20,
-        'png': Math.floor(Math.random() * 80) + 15,
-        'doc': Math.floor(Math.random() * 25) + 5,
-        'zip': Math.floor(Math.random() * 15) + 3
-      },
-      size_distribution: {
-        '<1MB': Math.floor(Math.random() * 200) + 50,
-        '1-10MB': Math.floor(Math.random() * 150) + 30,
-        '10-100MB': Math.floor(Math.random() * 50) + 10,
-        '>100MB': Math.floor(Math.random() * 20) + 5
-      }
-    };
+  const generateStatistics = async () => {
+    if (!selectedServerId) return;
 
     try {
-      const { data, error } = await supabase
-        .from('server_statistics')
-        .upsert([{
-          ...mockStats,
-          last_scan: new Date().toISOString()
-        }])
-        .select()
-        .single();
+      const { data, error } = await supabase.functions.invoke('ftp-operations', {
+        body: {
+          action: 'generate_statistics',
+          serverId: selectedServerId
+        }
+      });
 
       if (error) throw error;
-      setStats(data);
+
+      if (data.success) {
+        // Refresh statistics after generation
+        await fetchStatistics();
+        toast({
+          title: "Statistics generated",
+          description: "Server statistics have been updated"
+        });
+      } else {
+        throw new Error(data.error || 'Failed to generate statistics');
+      }
     } catch (error: any) {
-      console.error('Failed to generate mock statistics:', error);
+      toast({
+        title: "Failed to generate statistics",
+        description: error.message,
+        variant: "destructive"
+      });
     }
   };
 

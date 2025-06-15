@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -87,7 +86,7 @@ const HistoryTab = () => {
       }
 
       if (statusFilter !== 'all') {
-        query = query.eq('status', statusFilter);
+        query = query.eq('status', statusFilter as 'pending' | 'in_progress' | 'completed' | 'failed');
       }
 
       const { data, error } = await query;
@@ -100,11 +99,6 @@ const HistoryTab = () => {
       }));
 
       setHistory(formattedData);
-
-      // If no data exists, generate some mock data
-      if (formattedData.length === 0 && servers.length > 0) {
-        await generateMockHistory();
-      }
     } catch (error: any) {
       toast({
         title: "Failed to fetch history",
@@ -113,45 +107,6 @@ const HistoryTab = () => {
       });
     } finally {
       setLoading(false);
-    }
-  };
-
-  const generateMockHistory = async () => {
-    if (servers.length === 0) return;
-
-    const mockFiles = [
-      'document.pdf', 'image.jpg', 'backup.zip', 'config.json', 'readme.txt',
-      'data.csv', 'presentation.pptx', 'video.mp4', 'archive.tar.gz'
-    ];
-
-    const statuses: Array<'completed' | 'failed' | 'pending'> = ['completed', 'failed', 'pending'];
-    
-    const mockHistory = Array.from({ length: 15 }, (_, i) => {
-      const status = statuses[Math.floor(Math.random() * statuses.length)];
-      const startTime = new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000);
-      const completedTime = status === 'completed' ? new Date(startTime.getTime() + Math.random() * 60 * 60 * 1000) : null;
-      
-      return {
-        server_id: servers[Math.floor(Math.random() * servers.length)].id,
-        file_name: mockFiles[Math.floor(Math.random() * mockFiles.length)],
-        file_size: Math.floor(Math.random() * 10000000) + 1000,
-        remote_path: `/uploads/${mockFiles[Math.floor(Math.random() * mockFiles.length)]}`,
-        status: status,
-        started_at: startTime.toISOString(),
-        completed_at: completedTime?.toISOString() || null,
-        error_message: status === 'failed' ? 'Connection timeout' : null
-      };
-    });
-
-    try {
-      const { error } = await supabase
-        .from('upload_history')
-        .insert(mockHistory);
-
-      if (error) throw error;
-      await fetchHistory();
-    } catch (error: any) {
-      console.error('Failed to generate mock history:', error);
     }
   };
 

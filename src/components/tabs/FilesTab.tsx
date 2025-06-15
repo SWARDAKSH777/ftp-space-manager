@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import FileUploader from '@/components/ftp/FileUploader';
 import { 
   Folder, 
   File, 
@@ -15,7 +16,9 @@ import {
   Download,
   Trash2,
   Search,
-  Loader2
+  Loader2,
+  Plus,
+  FolderPlus
 } from 'lucide-react';
 
 interface FtpServer {
@@ -41,6 +44,9 @@ const FilesTab = () => {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [connected, setConnected] = useState(false);
+  const [showUploader, setShowUploader] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [showNewFolder, setShowNewFolder] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -133,6 +139,116 @@ const FilesTab = () => {
     }
   };
 
+  const downloadFile = async (file: FtpFile) => {
+    if (file.type === 'directory') return;
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('ftp-operations', {
+        body: {
+          action: 'download_file',
+          serverId: selectedServerId,
+          path: file.path
+        }
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        // Create and trigger download
+        const blob = new Blob([data.content], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        toast({
+          title: "Download started",
+          description: `${file.name} is being downloaded`
+        });
+      } else {
+        throw new Error(data.error || 'Download failed');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Download failed",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  };
+
+  const deleteFile = async (file: FtpFile) => {
+    if (!confirm(`Are you sure you want to delete ${file.name}?`)) return;
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('ftp-operations', {
+        body: {
+          action: 'delete_file',
+          serverId: selectedServerId,
+          path: file.path
+        }
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        await listFiles(currentPath);
+        toast({
+          title: "File deleted",
+          description: `${file.name} has been deleted`
+        });
+      } else {
+        throw new Error(data.error || 'Delete failed');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Delete failed",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  };
+
+  const createFolder = async () => {
+    if (!newFolderName.trim()) return;
+    
+    try {
+      const folderPath = `${currentPath}/${newFolderName}`.replace('//', '/');
+      
+      const { data, error } = await supabase.functions.invoke('ftp-operations', {
+        body: {
+          action: 'create_directory',
+          serverId: selectedServerId,
+          path: folderPath
+        }
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        setNewFolderName('');
+        setShowNewFolder(false);
+        await listFiles(currentPath);
+        toast({
+          title: "Folder created",
+          description: `${newFolderName} has been created`
+        });
+      } else {
+        throw new Error(data.error || 'Failed to create folder');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Failed to create folder",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  };
+
   const navigateToPath = (path: string) => {
     listFiles(path);
   };
@@ -219,12 +335,40 @@ const FilesTab = () => {
                   >
                     <RefreshCw className="h-4 w-4" />
                   </Button>
-                  <Button size="sm">
+                  <Button 
+                    size="sm"
+                    onClick={() => setShowNewFolder(!showNewFolder)}
+                  >
+                    <FolderPlus className="h-4 w-4 mr-2" />
+                    New Folder
+                  </Button>
+                  <Button 
+                    size="sm"
+                    onClick={() => setShowUploader(!showUploader)}
+                  >
                     <Upload className="h-4 w-4 mr-2" />
                     Upload
                   </Button>
                 </div>
               </div>
+
+              {/* New Folder Input */}
+              {showNewFolder && (
+                <div className="flex items-center space-x-2 mb-4">
+                  <Input
+                    placeholder="Folder name"
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button size="sm" onClick={createFolder}>
+                    Create
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setShowNewFolder(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              )}
 
               {/* Search */}
               <div className="relative">
@@ -238,6 +382,17 @@ const FilesTab = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* File Upload Component */}
+          {showUploader && (
+            <div className="mb-6">
+              <FileUploader
+                serverId={selectedServerId}
+                currentPath={currentPath}
+                onUploadComplete={() => listFiles(currentPath)}
+              />
+            </div>
+          )}
 
           {/* File List */}
           <Card>
@@ -259,10 +414,12 @@ const FilesTab = () => {
                     filteredFiles.map((file, index) => (
                       <div
                         key={index}
-                        className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer"
-                        onClick={() => file.type === 'directory' && navigateToPath(file.path)}
+                        className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100"
                       >
-                        <div className="flex items-center space-x-3">
+                        <div 
+                          className="flex items-center space-x-3 flex-1 cursor-pointer"
+                          onClick={() => file.type === 'directory' && navigateToPath(file.path)}
+                        >
                           {file.type === 'directory' ? (
                             <Folder className="h-5 w-5 text-blue-500" />
                           ) : (
@@ -281,10 +438,18 @@ const FilesTab = () => {
                           </span>
                           {file.type === 'file' && (
                             <div className="flex space-x-1">
-                              <Button variant="ghost" size="sm">
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => downloadFile(file)}
+                              >
                                 <Download className="h-4 w-4" />
                               </Button>
-                              <Button variant="ghost" size="sm">
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => deleteFile(file)}
+                              >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
