@@ -9,7 +9,290 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      activity_log: {
+        Row: {
+          action: string
+          created_at: string | null
+          details: Json | null
+          id: string
+          ip_address: unknown | null
+          server_id: string | null
+          user_id: string
+        }
+        Insert: {
+          action: string
+          created_at?: string | null
+          details?: Json | null
+          id?: string
+          ip_address?: unknown | null
+          server_id?: string | null
+          user_id: string
+        }
+        Update: {
+          action?: string
+          created_at?: string | null
+          details?: Json | null
+          id?: string
+          ip_address?: unknown | null
+          server_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_log_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "ftp_servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      file_cache: {
+        Row: {
+          cached_at: string | null
+          id: string
+          mime_type: string | null
+          modified_at: string | null
+          name: string
+          path: string
+          preview_available: boolean | null
+          server_id: string
+          size: number | null
+          thumbnail_url: string | null
+          type: Database["public"]["Enums"]["file_type"]
+        }
+        Insert: {
+          cached_at?: string | null
+          id?: string
+          mime_type?: string | null
+          modified_at?: string | null
+          name: string
+          path: string
+          preview_available?: boolean | null
+          server_id: string
+          size?: number | null
+          thumbnail_url?: string | null
+          type: Database["public"]["Enums"]["file_type"]
+        }
+        Update: {
+          cached_at?: string | null
+          id?: string
+          mime_type?: string | null
+          modified_at?: string | null
+          name?: string
+          path?: string
+          preview_available?: boolean | null
+          server_id?: string
+          size?: number | null
+          thumbnail_url?: string | null
+          type?: Database["public"]["Enums"]["file_type"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "file_cache_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "ftp_servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ftp_servers: {
+        Row: {
+          created_at: string | null
+          host: string
+          id: string
+          last_connected: string | null
+          name: string
+          passive_mode: boolean | null
+          password: string
+          port: number | null
+          protocol: string | null
+          status: Database["public"]["Enums"]["connection_status"] | null
+          updated_at: string | null
+          user_id: string
+          username: string
+        }
+        Insert: {
+          created_at?: string | null
+          host: string
+          id?: string
+          last_connected?: string | null
+          name: string
+          passive_mode?: boolean | null
+          password: string
+          port?: number | null
+          protocol?: string | null
+          status?: Database["public"]["Enums"]["connection_status"] | null
+          updated_at?: string | null
+          user_id: string
+          username: string
+        }
+        Update: {
+          created_at?: string | null
+          host?: string
+          id?: string
+          last_connected?: string | null
+          name?: string
+          passive_mode?: boolean | null
+          password?: string
+          port?: number | null
+          protocol?: string | null
+          status?: Database["public"]["Enums"]["connection_status"] | null
+          updated_at?: string | null
+          user_id?: string
+          username?: string
+        }
+        Relationships: []
+      }
+      server_statistics: {
+        Row: {
+          file_types: Json | null
+          id: string
+          last_scan: string | null
+          server_id: string
+          size_distribution: Json | null
+          total_directories: number | null
+          total_files: number | null
+          total_size: number | null
+        }
+        Insert: {
+          file_types?: Json | null
+          id?: string
+          last_scan?: string | null
+          server_id: string
+          size_distribution?: Json | null
+          total_directories?: number | null
+          total_files?: number | null
+          total_size?: number | null
+        }
+        Update: {
+          file_types?: Json | null
+          id?: string
+          last_scan?: string | null
+          server_id?: string
+          size_distribution?: Json | null
+          total_directories?: number | null
+          total_files?: number | null
+          total_size?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_statistics_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "ftp_servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      upload_history: {
+        Row: {
+          completed_at: string | null
+          error_message: string | null
+          file_name: string
+          file_size: number | null
+          id: string
+          local_path: string | null
+          remote_path: string
+          schedule_id: string | null
+          server_id: string
+          started_at: string | null
+          status: Database["public"]["Enums"]["upload_status"] | null
+        }
+        Insert: {
+          completed_at?: string | null
+          error_message?: string | null
+          file_name: string
+          file_size?: number | null
+          id?: string
+          local_path?: string | null
+          remote_path: string
+          schedule_id?: string | null
+          server_id: string
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["upload_status"] | null
+        }
+        Update: {
+          completed_at?: string | null
+          error_message?: string | null
+          file_name?: string
+          file_size?: number | null
+          id?: string
+          local_path?: string | null
+          remote_path?: string
+          schedule_id?: string | null
+          server_id?: string
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["upload_status"] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "upload_history_schedule_id_fkey"
+            columns: ["schedule_id"]
+            isOneToOne: false
+            referencedRelation: "upload_schedules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "upload_history_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "ftp_servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      upload_schedules: {
+        Row: {
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          last_run: string | null
+          local_path: string
+          name: string
+          next_run: string | null
+          remote_path: string
+          schedule_cron: string
+          server_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_run?: string | null
+          local_path: string
+          name: string
+          next_run?: string | null
+          remote_path: string
+          schedule_cron: string
+          server_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_run?: string | null
+          local_path?: string
+          name?: string
+          next_run?: string | null
+          remote_path?: string
+          schedule_cron?: string
+          server_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "upload_schedules_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "ftp_servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -18,7 +301,9 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      connection_status: "active" | "inactive" | "error"
+      file_type: "file" | "directory"
+      upload_status: "pending" | "in_progress" | "completed" | "failed"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -133,6 +418,10 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      connection_status: ["active", "inactive", "error"],
+      file_type: ["file", "directory"],
+      upload_status: ["pending", "in_progress", "completed", "failed"],
+    },
   },
 } as const
