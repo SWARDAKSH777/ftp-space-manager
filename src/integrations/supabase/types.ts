@@ -108,6 +108,7 @@ export type Database = {
           password: string
           port: number | null
           protocol: string | null
+          shared_with_team: string | null
           status: Database["public"]["Enums"]["connection_status"] | null
           updated_at: string | null
           user_id: string
@@ -123,6 +124,7 @@ export type Database = {
           password: string
           port?: number | null
           protocol?: string | null
+          shared_with_team?: string | null
           status?: Database["public"]["Enums"]["connection_status"] | null
           updated_at?: string | null
           user_id: string
@@ -138,12 +140,21 @@ export type Database = {
           password?: string
           port?: number | null
           protocol?: string | null
+          shared_with_team?: string | null
           status?: Database["public"]["Enums"]["connection_status"] | null
           updated_at?: string | null
           user_id?: string
           username?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "ftp_servers_shared_with_team_fkey"
+            columns: ["shared_with_team"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       server_statistics: {
         Row: {
@@ -185,6 +196,91 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      shared_ftp_servers: {
+        Row: {
+          can_edit: boolean | null
+          created_at: string | null
+          ftp_server_id: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          can_edit?: boolean | null
+          created_at?: string | null
+          ftp_server_id: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          can_edit?: boolean | null
+          created_at?: string | null
+          ftp_server_id?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_ftp_servers_ftp_server_id_fkey"
+            columns: ["ftp_server_id"]
+            isOneToOne: false
+            referencedRelation: "ftp_servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      team_members: {
+        Row: {
+          id: string
+          joined_at: string | null
+          role: string | null
+          team_id: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string | null
+          role?: string | null
+          team_id: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string | null
+          role?: string | null
+          team_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_members_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      teams: {
+        Row: {
+          created_at: string | null
+          created_by: string
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string | null
+          created_by: string
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string
+          id?: string
+          name?: string
+        }
+        Relationships: []
       }
       upload_history: {
         Row: {
