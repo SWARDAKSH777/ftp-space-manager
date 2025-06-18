@@ -3,30 +3,28 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import FileUploader from '@/components/ftp/FileUploader';
+import { Input } from '@/components/ui/input';
+import { 
+  Breadcrumb,
+  BreadcrumbEllipsis,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import { 
   Folder, 
   File, 
-  ArrowLeft, 
-  RefreshCw, 
-  Upload,
-  Download,
-  Trash2,
-  Search,
-  Loader2,
+  Upload, 
+  Download, 
+  Trash2, 
+  RefreshCw,
+  ArrowLeft,
   Plus,
   FolderPlus
 } from 'lucide-react';
-
-interface FtpServer {
-  id: string;
-  name: string;
-  host: string;
-  status: 'active' | 'inactive' | 'error';
-}
 
 interface FtpFile {
   name: string;
@@ -34,34 +32,53 @@ interface FtpFile {
   type: 'file' | 'directory';
   modified_at: string;
   path: string;
+  permissions?: string;
+}
+
+interface FtpServer {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  protocol: string;
+  status: 'active' | 'inactive' | 'error';
 }
 
 const FilesTab = () => {
   const [servers, setServers] = useState<FtpServer[]>([]);
-  const [selectedServerId, setSelectedServerId] = useState<string>('');
+  const [selectedServer, setSelectedServer] = useState<FtpServer | null>(null);
   const [currentPath, setCurrentPath] = useState('/');
   const [files, setFiles] = useState<FtpFile[]>([]);
   const [loading, setLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [connected, setConnected] = useState(false);
-  const [showUploader, setShowUploader] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
-  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const { toast } = useToast();
 
+  // Fetch servers on component mount
   useEffect(() => {
     fetchServers();
   }, []);
+
+  // Fetch files when server or path changes
+  useEffect(() => {
+    if (selectedServer) {
+      fetchFiles();
+    }
+  }, [selectedServer, currentPath]);
 
   const fetchServers = async () => {
     try {
       const { data, error } = await supabase
         .from('ftp_servers')
-        .select('id, name, host, status')
+        .select('*')
+        .eq('status', 'active')
         .order('name');
 
       if (error) throw error;
       setServers(data || []);
+      if (data && data.length > 0 && !selectedServer) {
+        setSelectedServer(data[0]);
+      }
     } catch (error: any) {
       toast({
         title: "Failed to fetch servers",
@@ -71,52 +88,16 @@ const FilesTab = () => {
     }
   };
 
-  const connectToServer = async () => {
-    if (!selectedServerId) return;
-    
-    setLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('ftp-operations', {
-        body: {
-          action: 'test_connection',
-          serverId: selectedServerId
-        }
-      });
-
-      if (error) throw error;
-
-      if (data.success) {
-        setConnected(true);
-        setCurrentPath('/');
-        await listFiles('/');
-        toast({
-          title: "Connected successfully",
-          description: "FTP connection established"
-        });
-      } else {
-        throw new Error(data.error || 'Connection failed');
-      }
-    } catch (error: any) {
-      toast({
-        title: "Connection failed",
-        description: error.message,
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const listFiles = async (path: string) => {
-    if (!selectedServerId) return;
+  const fetchFiles = async () => {
+    if (!selectedServer) return;
     
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'list_files',
-          serverId: selectedServerId,
-          path: path
+          serverId: selectedServer.id,
+          path: currentPath
         }
       });
 
@@ -124,50 +105,111 @@ const FilesTab = () => {
 
       if (data.success) {
         setFiles(data.files || []);
-        setCurrentPath(path);
       } else {
         throw new Error(data.error || 'Failed to list files');
       }
     } catch (error: any) {
       toast({
-        title: "Failed to list files",
+        title: "Failed to fetch files",
         description: error.message,
         variant: "destructive"
       });
+      setFiles([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const downloadFile = async (file: FtpFile) => {
-    if (file.type === 'directory') return;
-    
+  const handleFileClick = (file: FtpFile) => {
+    if (file.type === 'directory') {
+      if (file.name === '..') {
+        // Navigate to parent directory
+        const parentPath = currentPath.split('/').slice(0, -1).join('/') || '/';
+        setCurrentPath(parentPath);
+      } else {
+        // Navigate into directory
+        setCurrentPath(file.path);
+      }
+    }
+  };
+
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !selectedServer) return;
+
+    setUploading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const content = e.target?.result as string;
+        const remotePath = `${currentPath}/${file.name}`.replace('//', '/');
+
+        const { data, error } = await supabase.functions.invoke('ftp-operations', {
+          body: {
+            action: 'upload_file',
+            serverId: selectedServer.id,
+            fileData: {
+              fileName: file.name,
+              size: file.size,
+              localPath: file.name,
+              remotePath: remotePath,
+              content: btoa(content)
+            }
+          }
+        });
+
+        if (error) throw error;
+
+        if (data.success) {
+          toast({
+            title: "File uploaded successfully",
+            description: `${file.name} has been uploaded`
+          });
+          fetchFiles(); // Refresh file list
+        } else {
+          throw new Error(data.error || 'Upload failed');
+        }
+      };
+      reader.readAsText(file);
+    } catch (error: any) {
+      toast({
+        title: "Upload failed",
+        description: error.message,
+        variant: "destructive"
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDownload = async (file: FtpFile) => {
+    if (!selectedServer || file.type === 'directory') return;
+
     try {
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'download_file',
-          serverId: selectedServerId,
+          serverId: selectedServer.id,
           path: file.path
         }
       });
 
       if (error) throw error;
 
-      if (data.success) {
-        // Create and trigger download
-        const blob = new Blob([data.content], { type: 'application/octet-stream' });
+      if (data.success && data.content) {
+        // Create download link
+        const content = atob(data.content);
+        const blob = new Blob([content], { type: 'application/octet-stream' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = file.name;
-        document.body.appendChild(a);
         a.click();
-        document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
         toast({
-          title: "Download started",
-          description: `${file.name} is being downloaded`
+          title: "File downloaded",
+          description: `${file.name} has been downloaded`
         });
       } else {
         throw new Error(data.error || 'Download failed');
@@ -181,14 +223,14 @@ const FilesTab = () => {
     }
   };
 
-  const deleteFile = async (file: FtpFile) => {
-    if (!confirm(`Are you sure you want to delete ${file.name}?`)) return;
-    
+  const handleDelete = async (file: FtpFile) => {
+    if (!selectedServer) return;
+
     try {
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'delete_file',
-          serverId: selectedServerId,
+          serverId: selectedServer.id,
           path: file.path
         }
       });
@@ -196,11 +238,11 @@ const FilesTab = () => {
       if (error) throw error;
 
       if (data.success) {
-        await listFiles(currentPath);
         toast({
           title: "File deleted",
           description: `${file.name} has been deleted`
         });
+        fetchFiles(); // Refresh file list
       } else {
         throw new Error(data.error || 'Delete failed');
       }
@@ -213,256 +255,235 @@ const FilesTab = () => {
     }
   };
 
-  const createFolder = async () => {
-    if (!newFolderName.trim()) return;
-    
+  const handleCreateDirectory = async () => {
+    const dirName = prompt('Enter directory name:');
+    if (!dirName || !selectedServer) return;
+
+    const dirPath = `${currentPath}/${dirName}`.replace('//', '/');
+
     try {
-      const folderPath = `${currentPath}/${newFolderName}`.replace('//', '/');
-      
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'create_directory',
-          serverId: selectedServerId,
-          path: folderPath
+          serverId: selectedServer.id,
+          path: dirPath
         }
       });
 
       if (error) throw error;
 
       if (data.success) {
-        setNewFolderName('');
-        setShowNewFolder(false);
-        await listFiles(currentPath);
         toast({
-          title: "Folder created",
-          description: `${newFolderName} has been created`
+          title: "Directory created",
+          description: `${dirName} has been created`
         });
+        fetchFiles(); // Refresh file list
       } else {
-        throw new Error(data.error || 'Failed to create folder');
+        throw new Error(data.error || 'Directory creation failed');
       }
     } catch (error: any) {
       toast({
-        title: "Failed to create folder",
+        title: "Create directory failed",
         description: error.message,
         variant: "destructive"
       });
     }
   };
 
-  const navigateToPath = (path: string) => {
-    listFiles(path);
-  };
-
   const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '-';
+    if (bytes === 0) return '0 Bytes';
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
+  const renderBreadcrumb = () => {
+    const pathParts = currentPath.split('/').filter(part => part);
+    
+    return (
+      <Breadcrumb>
+        <BreadcrumbList>
+          <BreadcrumbItem>
+            <BreadcrumbLink 
+              onClick={() => setCurrentPath('/')}
+              className="cursor-pointer"
+            >
+              Root
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          {pathParts.map((part, index) => (
+            <React.Fragment key={index}>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                {index === pathParts.length - 1 ? (
+                  <BreadcrumbPage>{part}</BreadcrumbPage>
+                ) : (
+                  <BreadcrumbLink 
+                    onClick={() => setCurrentPath('/' + pathParts.slice(0, index + 1).join('/'))}
+                    className="cursor-pointer"
+                  >
+                    {part}
+                  </BreadcrumbLink>
+                )}
+              </BreadcrumbItem>
+            </React.Fragment>
+          ))}
+        </BreadcrumbList>
+      </Breadcrumb>
+    );
   };
-
-  const filteredFiles = files.filter(file =>
-    file.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   return (
     <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">File Browser</h1>
-        <p className="text-gray-600">Browse and manage files on your FTP servers</p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">File Browser</h1>
+          <p className="text-gray-600">Browse and manage files on your FTP servers</p>
+        </div>
+        <div className="flex space-x-2">
+          {selectedServer && (
+            <>
+              <Button
+                variant="outline"
+                onClick={handleCreateDirectory}
+                disabled={loading}
+              >
+                <FolderPlus className="mr-2 h-4 w-4" />
+                New Folder
+              </Button>
+              <label>
+                <Button
+                  variant="outline"
+                  disabled={uploading || loading}
+                  asChild
+                >
+                  <span>
+                    <Upload className="mr-2 h-4 w-4" />
+                    {uploading ? 'Uploading...' : 'Upload File'}
+                  </span>
+                </Button>
+                <input
+                  type="file"
+                  onChange={handleUpload}
+                  className="hidden"
+                  disabled={uploading || loading}
+                />
+              </label>
+              <Button
+                variant="outline"
+                onClick={fetchFiles}
+                disabled={loading}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* Server Selection */}
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>Server Connection</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center space-x-4">
-            <div className="flex-1">
-              <Select value={selectedServerId} onValueChange={setSelectedServerId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select an FTP server" />
-                </SelectTrigger>
-                <SelectContent>
-                  {servers.map((server) => (
-                    <SelectItem key={server.id} value={server.id}>
-                      {server.name} ({server.host})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button 
-              onClick={connectToServer} 
-              disabled={!selectedServerId || loading}
-            >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              {connected ? 'Reconnect' : 'Connect'}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {connected && (
-        <>
-          {/* Navigation Bar */}
-          <Card className="mb-6">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center space-x-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => navigateToPath('/')}
-                    disabled={currentPath === '/'}
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                  </Button>
-                  <span className="text-sm text-gray-600">Path:</span>
-                  <code className="bg-gray-100 px-2 py-1 rounded text-sm">{currentPath}</code>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => listFiles(currentPath)}
-                    disabled={loading}
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                  </Button>
-                  <Button 
-                    size="sm"
-                    onClick={() => setShowNewFolder(!showNewFolder)}
-                  >
-                    <FolderPlus className="h-4 w-4 mr-2" />
-                    New Folder
-                  </Button>
-                  <Button 
-                    size="sm"
-                    onClick={() => setShowUploader(!showUploader)}
-                  >
-                    <Upload className="h-4 w-4 mr-2" />
-                    Upload
-                  </Button>
-                </div>
-              </div>
-
-              {/* New Folder Input */}
-              {showNewFolder && (
-                <div className="flex items-center space-x-2 mb-4">
-                  <Input
-                    placeholder="Folder name"
-                    value={newFolderName}
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    className="flex-1"
-                  />
-                  <Button size="sm" onClick={createFolder}>
-                    Create
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => setShowNewFolder(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              )}
-
-              {/* Search */}
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                <Input
-                  placeholder="Search files and folders..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* File Upload Component */}
-          {showUploader && (
-            <div className="mb-6">
-              <FileUploader
-                serverId={selectedServerId}
-                currentPath={currentPath}
-                onUploadComplete={() => listFiles(currentPath)}
-              />
-            </div>
-          )}
-
-          {/* File List */}
+      {servers.length === 0 ? (
+        <Card>
+          <CardContent className="text-center py-12">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No Active Servers</h3>
+            <p className="text-gray-600">Connect to an FTP server first to browse files</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-6">
+          {/* Server Selection */}
           <Card>
             <CardHeader>
-              <CardTitle>Files and Folders</CardTitle>
+              <CardTitle>Select Server</CardTitle>
             </CardHeader>
             <CardContent>
-              {loading ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin" />
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {filteredFiles.length === 0 ? (
-                    <div className="text-center py-8 text-gray-500">
-                      No files found
-                    </div>
-                  ) : (
-                    filteredFiles.map((file, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100"
-                      >
-                        <div 
-                          className="flex items-center space-x-3 flex-1 cursor-pointer"
-                          onClick={() => file.type === 'directory' && navigateToPath(file.path)}
-                        >
-                          {file.type === 'directory' ? (
-                            <Folder className="h-5 w-5 text-blue-500" />
-                          ) : (
-                            <File className="h-5 w-5 text-gray-500" />
-                          )}
-                          <div>
-                            <div className="font-medium">{file.name}</div>
-                            <div className="text-sm text-gray-500">
-                              {formatDate(file.modified_at)}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-4">
-                          <span className="text-sm text-gray-500">
-                            {formatFileSize(file.size)}
-                          </span>
-                          {file.type === 'file' && (
-                            <div className="flex space-x-1">
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => downloadFile(file)}
-                              >
-                                <Download className="h-4 w-4" />
-                              </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => deleteFile(file)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
+              <div className="flex flex-wrap gap-2">
+                {servers.map((server) => (
+                  <Button
+                    key={server.id}
+                    variant={selectedServer?.id === server.id ? "default" : "outline"}
+                    onClick={() => setSelectedServer(server)}
+                    className="flex items-center"
+                  >
+                    {server.name}
+                  </Button>
+                ))}
+              </div>
             </CardContent>
           </Card>
-        </>
+
+          {selectedServer && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center">
+                    <Folder className="mr-2 h-5 w-5" />
+                    {selectedServer.name}
+                  </CardTitle>
+                  {renderBreadcrumb()}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <div className="text-center py-12">
+                    <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" />
+                    <p>Loading files...</p>
+                  </div>
+                ) : files.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Folder className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">Empty Directory</h3>
+                    <p className="text-gray-600">This directory is empty</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {files.map((file, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-3 rounded-lg border hover:bg-gray-50 cursor-pointer"
+                        onClick={() => handleFileClick(file)}
+                      >
+                        <div className="flex items-center space-x-3">
+                          {file.type === 'directory' ? (
+                            <Folder className="h-5 w-5 text-blue-600" />
+                          ) : (
+                            <File className="h-5 w-5 text-gray-600" />
+                          )}
+                          <div>
+                            <p className="font-medium">{file.name}</p>
+                            <p className="text-sm text-gray-500">
+                              {formatFileSize(file.size)} • {new Date(file.modified_at).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        {file.type === 'file' && file.name !== '..' && (
+                          <div className="flex space-x-2" onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleDownload(file)}
+                            >
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleDelete(file)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
     </div>
   );
