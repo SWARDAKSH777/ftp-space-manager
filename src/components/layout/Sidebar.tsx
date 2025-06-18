@@ -9,7 +9,8 @@ import {
   Clock, 
   History, 
   Settings,
-  LogOut
+  LogOut,
+  Users
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -25,6 +26,7 @@ const Sidebar = ({ activeTab, onTabChange, className }: SidebarProps) => {
   const menuItems = [
     { id: 'servers', label: 'FTP Servers', icon: HardDrive },
     { id: 'files', label: 'File Browser', icon: Plus },
+    { id: 'teams', label: 'Teams', icon: Users },
     { id: 'statistics', label: 'Statistics', icon: BarChart3 },
     { id: 'schedules', label: 'Schedules', icon: Clock },
     { id: 'history', label: 'History', icon: History },

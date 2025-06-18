@@ -3,6 +3,7 @@ import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import ShareServerDialog from '@/components/teams/ShareServerDialog';
 import { 
   Server, 
   Edit, 
@@ -103,6 +104,7 @@ const ServerCard = ({ server, onEdit, onDelete, onConnect }: ServerCardProps) =>
           >
             <Edit className="h-4 w-4" />
           </Button>
+          <ShareServerDialog serverId={server.id} serverName={server.name} />
           <Button 
             size="sm" 
             variant="outline"
