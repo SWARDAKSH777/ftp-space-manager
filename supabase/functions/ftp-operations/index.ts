@@ -361,8 +361,11 @@ async function listFiles(config: FtpConnectionConfig, path: string): Promise<{ s
 }
 
 async function listFilesFtp(config: FtpConnectionConfig, path: string): Promise<{ success: boolean; files: FtpFile[]; error?: string }> {
+  let conn: Deno.TcpConn | null = null
+  let dataConn: Deno.TcpConn | null = null
+  
   try {
-    const conn = await Deno.connect({ 
+    conn = await Deno.connect({ 
       hostname: config.host, 
       port: config.port 
     })
@@ -370,7 +373,6 @@ async function listFilesFtp(config: FtpConnectionConfig, path: string): Promise<
     // Authenticate first
     const authResult = await authenticateFtp(conn, config)
     if (!authResult.success) {
-      conn.close()
       return { success: false, files: [], error: authResult.error }
     }
     
@@ -378,28 +380,101 @@ async function listFilesFtp(config: FtpConnectionConfig, path: string): Promise<
     await conn.write(new TextEncoder().encode('TYPE I\r\n'))
     await readFtpResponse(conn)
     
-    // Send PASV command for passive mode
-    if (config.passive_mode) {
+    // For active mode, use PORT command instead of PASV
+    if (!config.passive_mode) {
+      // Use active mode - create server socket and send PORT command
+      const listener = Deno.listen({ port: 0 })
+      const localAddr = listener.addr as Deno.NetAddr
+      const portBytes = [(localAddr.port >> 8) & 0xFF, localAddr.port & 0xFF]
+      
+      // Get local IP (simplified - use localhost for now)
+      const portCmd = `PORT 127,0,0,1,${portBytes[0]},${portBytes[1]}\r\n`
+      await conn.write(new TextEncoder().encode(portCmd))
+      const portResponse = await readFtpResponse(conn)
+      console.log('PORT Response:', portResponse)
+      
+      // Send LIST command
+      const listCmd = `LIST ${path}\r\n`
+      await conn.write(new TextEncoder().encode(listCmd))
+      
+      // Accept data connection
+      dataConn = await listener.accept()
+      listener.close()
+      
+      // Read LIST response from control connection
+      const listResponse = await readFtpResponse(conn)
+      console.log('LIST Response:', listResponse)
+      
+      // Read file data from data connection
+      const fileData = await readAllData(dataConn)
+      const fileListText = new TextDecoder().decode(fileData)
+      console.log('File list data:', fileListText)
+      
+      dataConn.close()
+      
+      // Parse the file list
+      const files = parseListResponse(fileListText, path)
+      
+      return {
+        success: true,
+        files: files
+      }
+    } else {
+      // Try passive mode with better error handling
       await conn.write(new TextEncoder().encode('PASV\r\n'))
       const pasvResponse = await readFtpResponse(conn)
       console.log('PASV Response:', pasvResponse)
-    }
-    
-    // Send LIST command
-    const listCmd = `LIST ${path}\r\n`
-    await conn.write(new TextEncoder().encode(listCmd))
-    
-    const listResponse = await readFtpResponse(conn)
-    console.log('LIST Response:', listResponse)
-    
-    conn.close()
-    
-    // Parse the LIST response to extract file information
-    const files = parseListResponse(listResponse, path)
-    
-    return {
-      success: true,
-      files: files
+      
+      if (!pasvResponse.startsWith('227')) {
+        return { success: false, files: [], error: 'PASV command failed' }
+      }
+      
+      // Parse PASV response to get data port
+      const pasvMatch = pasvResponse.match(/\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)/)
+      if (!pasvMatch) {
+        return { success: false, files: [], error: 'Could not parse PASV response' }
+      }
+      
+      const dataHost = `${pasvMatch[1]}.${pasvMatch[2]}.${pasvMatch[3]}.${pasvMatch[4]}`
+      const dataPort = parseInt(pasvMatch[5]) * 256 + parseInt(pasvMatch[6])
+      
+      console.log(`Connecting to data port: ${dataHost}:${dataPort}`)
+      
+      try {
+        // Connect to data port with timeout
+        dataConn = await Promise.race([
+          Deno.connect({ hostname: dataHost, port: dataPort }),
+          new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error('Data connection timeout')), 5000)
+          )
+        ])
+      } catch (error) {
+        console.error('Data connection failed:', error)
+        return { success: false, files: [], error: 'Data connection failed - server may not support passive mode from this network' }
+      }
+      
+      // Send LIST command
+      const listCmd = `LIST ${path}\r\n`
+      await conn.write(new TextEncoder().encode(listCmd))
+      
+      // Read file data from data connection
+      const fileData = await readAllData(dataConn)
+      const fileListText = new TextDecoder().decode(fileData)
+      console.log('File list data:', fileListText)
+      
+      dataConn.close()
+      
+      // Read LIST response from control connection
+      const listResponse = await readFtpResponse(conn)
+      console.log('LIST Response:', listResponse)
+      
+      // Parse the file list
+      const files = parseListResponse(fileListText, path)
+      
+      return {
+        success: true,
+        files: files
+      }
     }
   } catch (error) {
     console.error('FTP LIST failed:', error)
@@ -408,7 +483,42 @@ async function listFilesFtp(config: FtpConnectionConfig, path: string): Promise<
       files: [],
       error: `FTP list failed: ${error.message}`
     }
+  } finally {
+    if (dataConn) {
+      try { dataConn.close() } catch {}
+    }
+    if (conn) {
+      try { conn.close() } catch {}
+    }
   }
+}
+
+async function readAllData(conn: Deno.TcpConn): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = []
+  const buffer = new Uint8Array(4096)
+  
+  try {
+    while (true) {
+      const bytesRead = await conn.read(buffer)
+      if (!bytesRead || bytesRead === 0) break
+      
+      chunks.push(buffer.slice(0, bytesRead))
+    }
+  } catch (error) {
+    // Connection closed, which is expected
+  }
+  
+  // Combine all chunks
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const result = new Uint8Array(totalLength)
+  let offset = 0
+  
+  for (const chunk of chunks) {
+    result.set(chunk, offset)
+    offset += chunk.length
+  }
+  
+  return result
 }
 
 async function listFilesSftp(config: FtpConnectionConfig, path: string): Promise<{ success: boolean; files: FtpFile[]; error?: string }> {
@@ -500,6 +610,9 @@ function parseListResponse(response: string, basePath: string): FtpFile[] {
 }
 
 async function uploadFile(config: FtpConnectionConfig, localPath: string, remotePath: string, content: string): Promise<{ success: boolean; error?: string }> {
+  let conn: Deno.TcpConn | null = null
+  let dataConn: Deno.TcpConn | null = null
+  
   try {
     console.log(`Uploading file to ${remotePath} on ${config.host}`)
     
@@ -507,7 +620,7 @@ async function uploadFile(config: FtpConnectionConfig, localPath: string, remote
       return { success: false, error: 'SFTP upload requires SSH2 protocol implementation. Please use FTP for now.' }
     }
     
-    const conn = await Deno.connect({ 
+    conn = await Deno.connect({ 
       hostname: config.host, 
       port: config.port 
     })
@@ -515,7 +628,6 @@ async function uploadFile(config: FtpConnectionConfig, localPath: string, remote
     // Authenticate
     const authResult = await authenticateFtp(conn, config)
     if (!authResult.success) {
-      conn.close()
       return { success: false, error: authResult.error }
     }
     
@@ -523,33 +635,58 @@ async function uploadFile(config: FtpConnectionConfig, localPath: string, remote
     await conn.write(new TextEncoder().encode('TYPE I\r\n'))
     await readFtpResponse(conn)
     
-    // Create data connection for upload
-    if (config.passive_mode) {
-      await conn.write(new TextEncoder().encode('PASV\r\n'))
-      const pasvResponse = await readFtpResponse(conn)
-      console.log('PASV Response:', pasvResponse)
-    }
+    // Use active mode for upload
+    const listener = Deno.listen({ port: 0 })
+    const localAddr = listener.addr as Deno.NetAddr
+    const portBytes = [(localAddr.port >> 8) & 0xFF, localAddr.port & 0xFF]
+    
+    const portCmd = `PORT 127,0,0,1,${portBytes[0]},${portBytes[1]}\r\n`
+    await conn.write(new TextEncoder().encode(portCmd))
+    const portResponse = await readFtpResponse(conn)
+    console.log('PORT Response:', portResponse)
     
     // Send STOR command
     const storCmd = `STOR ${remotePath}\r\n`
     await conn.write(new TextEncoder().encode(storCmd))
     
+    // Accept data connection
+    dataConn = await listener.accept()
+    listener.close()
+    
+    // Write file content to data connection
+    const fileBytes = new TextEncoder().encode(atob(content))
+    await dataConn.write(fileBytes)
+    dataConn.close()
+    
+    // Read STOR response
     const storResponse = await readFtpResponse(conn)
     console.log('STOR Response:', storResponse)
     
-    conn.close()
-    
-    return { success: true }
+    if (storResponse.startsWith('226') || storResponse.startsWith('250')) {
+      return { success: true }
+    } else {
+      return { success: false, error: 'Upload failed - ' + storResponse }
+    }
   } catch (error) {
     console.error('Upload failed:', error)
     return {
       success: false,
       error: `Upload failed: ${error.message}`
     }
+  } finally {
+    if (dataConn) {
+      try { dataConn.close() } catch {}
+    }
+    if (conn) {
+      try { conn.close() } catch {}
+    }
   }
 }
 
 async function downloadFile(config: FtpConnectionConfig, path: string): Promise<{ success: boolean; content?: string; error?: string }> {
+  let conn: Deno.TcpConn | null = null
+  let dataConn: Deno.TcpConn | null = null
+  
   try {
     console.log(`Downloading file from ${path} on ${config.host}`)
     
@@ -557,7 +694,7 @@ async function downloadFile(config: FtpConnectionConfig, path: string): Promise<
       return { success: false, error: 'SFTP download requires SSH2 protocol implementation. Please use FTP for now.' }
     }
     
-    const conn = await Deno.connect({ 
+    conn = await Deno.connect({ 
       hostname: config.host, 
       port: config.port 
     })
@@ -565,7 +702,6 @@ async function downloadFile(config: FtpConnectionConfig, path: string): Promise<
     // Authenticate
     const authResult = await authenticateFtp(conn, config)
     if (!authResult.success) {
-      conn.close()
       return { success: false, error: authResult.error }
     }
     
@@ -573,26 +709,52 @@ async function downloadFile(config: FtpConnectionConfig, path: string): Promise<
     await conn.write(new TextEncoder().encode('TYPE I\r\n'))
     await readFtpResponse(conn)
     
+    // Use active mode for download
+    const listener = Deno.listen({ port: 0 })
+    const localAddr = listener.addr as Deno.NetAddr
+    const portBytes = [(localAddr.port >> 8) & 0xFF, localAddr.port & 0xFF]
+    
+    const portCmd = `PORT 127,0,0,1,${portBytes[0]},${portBytes[1]}\r\n`
+    await conn.write(new TextEncoder().encode(portCmd))
+    const portResponse = await readFtpResponse(conn)
+    console.log('PORT Response:', portResponse)
+    
     // Send RETR command
     const retrCmd = `RETR ${path}\r\n`
     await conn.write(new TextEncoder().encode(retrCmd))
     
+    // Accept data connection
+    dataConn = await listener.accept()
+    listener.close()
+    
+    // Read file content from data connection
+    const fileData = await readAllData(dataConn)
+    dataConn.close()
+    
+    // Read RETR response
     const retrResponse = await readFtpResponse(conn)
     console.log('RETR Response:', retrResponse)
     
-    conn.close()
-    
-    // For demonstration, return empty content
-    // In a real implementation, you'd need to handle the data connection
-    return {
-      success: true,
-      content: btoa('File content would be retrieved from data connection')
+    if (retrResponse.startsWith('226') || retrResponse.startsWith('250')) {
+      return {
+        success: true,
+        content: btoa(new TextDecoder().decode(fileData))
+      }
+    } else {
+      return { success: false, error: 'Download failed - ' + retrResponse }
     }
   } catch (error) {
     console.error('Download failed:', error)
     return {
       success: false,
       error: `Download failed: ${error.message}`
+    }
+  } finally {
+    if (dataConn) {
+      try { dataConn.close() } catch {}
+    }
+    if (conn) {
+      try { conn.close() } catch {}
     }
   }
 }

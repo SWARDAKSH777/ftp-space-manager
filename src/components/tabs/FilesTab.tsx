@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -23,7 +22,9 @@ import {
   RefreshCw,
   ArrowLeft,
   Plus,
-  FolderPlus
+  FolderPlus,
+  AlertCircle,
+  Wifi
 } from 'lucide-react';
 
 interface FtpFile {
@@ -52,6 +53,7 @@ const FilesTab = () => {
   const [files, setFiles] = useState<FtpFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error' | null>(null);
   const { toast } = useToast();
 
   // Fetch servers on component mount
@@ -92,7 +94,11 @@ const FilesTab = () => {
     if (!selectedServer) return;
     
     setLoading(true);
+    setConnectionStatus('connecting');
+    
     try {
+      console.log(`Fetching files from ${selectedServer.name} at path: ${currentPath}`);
+      
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'list_files',
@@ -101,17 +107,43 @@ const FilesTab = () => {
         }
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase function error:', error);
+        throw error;
+      }
+
+      console.log('FTP function response:', data);
 
       if (data.success) {
         setFiles(data.files || []);
+        setConnectionStatus('connected');
+        
+        toast({
+          title: "Files loaded successfully",
+          description: `Found ${data.files?.length || 0} items in ${currentPath}`
+        });
       } else {
+        setConnectionStatus('error');
         throw new Error(data.error || 'Failed to list files');
       }
     } catch (error: any) {
+      console.error('Failed to fetch files:', error);
+      setConnectionStatus('error');
+      
+      let errorMessage = error.message;
+      
+      // Handle specific FTP errors
+      if (errorMessage.includes('Data connection failed')) {
+        errorMessage = 'Network connection failed. Your FTP server may not support passive mode from this network. Try using active mode or check your firewall settings.';
+      } else if (errorMessage.includes('timeout')) {
+        errorMessage = 'Connection timed out. Please check your server settings and network connection.';
+      } else if (errorMessage.includes('Authentication failed')) {
+        errorMessage = 'Login failed. Please check your username and password.';
+      }
+      
       toast({
         title: "Failed to fetch files",
-        description: error.message,
+        description: errorMessage,
         variant: "destructive"
       });
       setFiles([]);
@@ -141,43 +173,55 @@ const FilesTab = () => {
     try {
       const reader = new FileReader();
       reader.onload = async (e) => {
-        const content = e.target?.result as string;
-        const remotePath = `${currentPath}/${file.name}`.replace('//', '/');
+        try {
+          const content = e.target?.result as ArrayBuffer;
+          const remotePath = `${currentPath}/${file.name}`.replace('//', '/');
 
-        const { data, error } = await supabase.functions.invoke('ftp-operations', {
-          body: {
-            action: 'upload_file',
-            serverId: selectedServer.id,
-            fileData: {
-              fileName: file.name,
-              size: file.size,
-              localPath: file.name,
-              remotePath: remotePath,
-              content: btoa(content)
+          console.log(`Uploading ${file.name} to ${remotePath}`);
+
+          const { data, error } = await supabase.functions.invoke('ftp-operations', {
+            body: {
+              action: 'upload_file',
+              serverId: selectedServer.id,
+              fileData: {
+                fileName: file.name,
+                size: file.size,
+                localPath: file.name,
+                remotePath: remotePath,
+                content: btoa(String.fromCharCode(...new Uint8Array(content)))
+              }
             }
-          }
-        });
-
-        if (error) throw error;
-
-        if (data.success) {
-          toast({
-            title: "File uploaded successfully",
-            description: `${file.name} has been uploaded`
           });
-          fetchFiles(); // Refresh file list
-        } else {
-          throw new Error(data.error || 'Upload failed');
+
+          if (error) throw error;
+
+          if (data.success) {
+            toast({
+              title: "File uploaded successfully",
+              description: `${file.name} has been uploaded to ${remotePath}`
+            });
+            fetchFiles(); // Refresh file list
+          } else {
+            throw new Error(data.error || 'Upload failed');
+          }
+        } catch (uploadError: any) {
+          console.error('Upload failed:', uploadError);
+          toast({
+            title: "Upload failed",
+            description: uploadError.message,
+            variant: "destructive"
+          });
+        } finally {
+          setUploading(false);
         }
       };
-      reader.readAsText(file);
+      reader.readAsArrayBuffer(file);
     } catch (error: any) {
       toast({
         title: "Upload failed",
         description: error.message,
         variant: "destructive"
       });
-    } finally {
       setUploading(false);
     }
   };
@@ -296,6 +340,36 @@ const FilesTab = () => {
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const renderConnectionStatus = () => {
+    if (!connectionStatus) return null;
+    
+    switch (connectionStatus) {
+      case 'connecting':
+        return (
+          <div className="flex items-center text-yellow-600 text-sm mb-4">
+            <RefreshCw className="h-4 w-4 animate-spin mr-2" />
+            Connecting to server...
+          </div>
+        );
+      case 'connected':
+        return (
+          <div className="flex items-center text-green-600 text-sm mb-4">
+            <Wifi className="h-4 w-4 mr-2" />
+            Connected to {selectedServer?.name}
+          </div>
+        );
+      case 'error':
+        return (
+          <div className="flex items-center text-red-600 text-sm mb-4">
+            <AlertCircle className="h-4 w-4 mr-2" />
+            Connection failed. Check logs for details.
+          </div>
+        );
+      default:
+        return null;
+    }
   };
 
   const renderBreadcrumb = () => {
@@ -425,6 +499,8 @@ const FilesTab = () => {
                 </div>
               </CardHeader>
               <CardContent>
+                {renderConnectionStatus()}
+                
                 {loading ? (
                   <div className="text-center py-12">
                     <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" />
@@ -433,8 +509,25 @@ const FilesTab = () => {
                 ) : files.length === 0 ? (
                   <div className="text-center py-12">
                     <Folder className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-gray-900 mb-2">Empty Directory</h3>
-                    <p className="text-gray-600">This directory is empty</p>
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">
+                      {connectionStatus === 'error' ? 'Connection Failed' : 'Empty Directory'}
+                    </h3>
+                    <p className="text-gray-600">
+                      {connectionStatus === 'error' 
+                        ? 'Unable to connect to the FTP server. Please check your server configuration and try again.' 
+                        : 'This directory is empty'
+                      }
+                    </p>
+                    {connectionStatus === 'error' && (
+                      <Button
+                        onClick={fetchFiles}
+                        variant="outline"
+                        className="mt-4"
+                      >
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Retry Connection
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-2">
