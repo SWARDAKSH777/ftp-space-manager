@@ -15,7 +15,8 @@ import {
   Clock,
   Search,
   Filter,
-  RefreshCw
+  RefreshCw,
+  Loader
 } from 'lucide-react';
 
 interface UploadHistoryItem {
@@ -24,7 +25,7 @@ interface UploadHistoryItem {
   file_size: number;
   local_path: string;
   remote_path: string;
-  status: 'pending' | 'completed' | 'failed';
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
   started_at: string;
   completed_at: string | null;
   error_message: string | null;
@@ -102,6 +103,8 @@ const HistoryTab = () => {
         return <CheckCircle className="h-4 w-4 text-green-500" />;
       case 'failed':
         return <XCircle className="h-4 w-4 text-red-500" />;
+      case 'in_progress':
+        return <Loader className="h-4 w-4 text-blue-500 animate-spin" />;
       case 'pending':
       default:
         return <Clock className="h-4 w-4 text-yellow-500" />;
@@ -114,6 +117,8 @@ const HistoryTab = () => {
         return <Badge variant="default" className="bg-green-100 text-green-800">Completed</Badge>;
       case 'failed':
         return <Badge variant="destructive">Failed</Badge>;
+      case 'in_progress':
+        return <Badge variant="default" className="bg-blue-100 text-blue-800">In Progress</Badge>;
       case 'pending':
       default:
         return <Badge variant="secondary">Pending</Badge>;
@@ -191,6 +196,7 @@ const HistoryTab = () => {
                 <SelectContent>
                   <SelectItem value="all">All Status</SelectItem>
                   <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
                   <SelectItem value="failed">Failed</SelectItem>
                   <SelectItem value="pending">Pending</SelectItem>
                 </SelectContent>
