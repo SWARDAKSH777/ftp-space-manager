@@ -47,6 +47,45 @@ export type Database = {
           },
         ]
       }
+      admin_settings: {
+        Row: {
+          description: string | null
+          id: string
+          key: string
+          updated_at: string | null
+          updated_by: string
+          value: Json
+        }
+        Insert: {
+          description?: string | null
+          id?: string
+          key: string
+          updated_at?: string | null
+          updated_by: string
+          value: Json
+        }
+        Update: {
+          description?: string | null
+          id?: string
+          key?: string
+          updated_at?: string | null
+          updated_by?: string
+          value?: Json
+        }
+        Relationships: []
+      }
+      admin_users: {
+        Row: {
+          user_id: string
+        }
+        Insert: {
+          user_id: string
+        }
+        Update: {
+          user_id?: string
+        }
+        Relationships: []
+      }
       file_cache: {
         Row: {
           cached_at: string | null
@@ -97,6 +136,42 @@ export type Database = {
           },
         ]
       }
+      file_permissions: {
+        Row: {
+          can_delete: boolean | null
+          can_read: boolean | null
+          can_write: boolean | null
+          created_at: string | null
+          granted_by: string
+          id: string
+          path: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          can_delete?: boolean | null
+          can_read?: boolean | null
+          can_write?: boolean | null
+          created_at?: string | null
+          granted_by: string
+          id?: string
+          path: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          can_delete?: boolean | null
+          can_read?: boolean | null
+          can_write?: boolean | null
+          created_at?: string | null
+          granted_by?: string
+          id?: string
+          path?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       ftp_servers: {
         Row: {
           created_at: string | null
@@ -108,7 +183,6 @@ export type Database = {
           password: string
           port: number | null
           protocol: string | null
-          shared_with_team: string | null
           status: Database["public"]["Enums"]["connection_status"] | null
           updated_at: string | null
           user_id: string
@@ -124,7 +198,6 @@ export type Database = {
           password: string
           port?: number | null
           protocol?: string | null
-          shared_with_team?: string | null
           status?: Database["public"]["Enums"]["connection_status"] | null
           updated_at?: string | null
           user_id: string
@@ -140,21 +213,57 @@ export type Database = {
           password?: string
           port?: number | null
           protocol?: string | null
-          shared_with_team?: string | null
           status?: Database["public"]["Enums"]["connection_status"] | null
           updated_at?: string | null
           user_id?: string
           username?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "ftp_servers_shared_with_team_fkey"
-            columns: ["shared_with_team"]
-            isOneToOne: false
-            referencedRelation: "teams"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
+      }
+      server_config: {
+        Row: {
+          created_at: string | null
+          created_by: string
+          host: string
+          id: string
+          is_active: boolean | null
+          name: string
+          passive_mode: boolean | null
+          password: string
+          port: number | null
+          protocol: string | null
+          updated_at: string | null
+          username: string
+        }
+        Insert: {
+          created_at?: string | null
+          created_by: string
+          host: string
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          passive_mode?: boolean | null
+          password: string
+          port?: number | null
+          protocol?: string | null
+          updated_at?: string | null
+          username: string
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string
+          host?: string
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          passive_mode?: boolean | null
+          password?: string
+          port?: number | null
+          protocol?: string | null
+          updated_at?: string | null
+          username?: string
+        }
+        Relationships: []
       }
       server_statistics: {
         Row: {
@@ -196,91 +305,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      shared_ftp_servers: {
-        Row: {
-          can_edit: boolean | null
-          created_at: string | null
-          ftp_server_id: string
-          id: string
-          user_id: string
-        }
-        Insert: {
-          can_edit?: boolean | null
-          created_at?: string | null
-          ftp_server_id: string
-          id?: string
-          user_id: string
-        }
-        Update: {
-          can_edit?: boolean | null
-          created_at?: string | null
-          ftp_server_id?: string
-          id?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "shared_ftp_servers_ftp_server_id_fkey"
-            columns: ["ftp_server_id"]
-            isOneToOne: false
-            referencedRelation: "ftp_servers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      team_members: {
-        Row: {
-          id: string
-          joined_at: string | null
-          role: string | null
-          team_id: string
-          user_id: string
-        }
-        Insert: {
-          id?: string
-          joined_at?: string | null
-          role?: string | null
-          team_id: string
-          user_id: string
-        }
-        Update: {
-          id?: string
-          joined_at?: string | null
-          role?: string | null
-          team_id?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "team_members_team_id_fkey"
-            columns: ["team_id"]
-            isOneToOne: false
-            referencedRelation: "teams"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      teams: {
-        Row: {
-          created_at: string | null
-          created_by: string
-          id: string
-          name: string
-        }
-        Insert: {
-          created_at?: string | null
-          created_by: string
-          id?: string
-          name: string
-        }
-        Update: {
-          created_at?: string | null
-          created_by?: string
-          id?: string
-          name?: string
-        }
-        Relationships: []
       }
       upload_history: {
         Row: {
@@ -389,12 +413,109 @@ export type Database = {
           },
         ]
       }
+      user_permissions: {
+        Row: {
+          can_delete: boolean | null
+          can_read: boolean | null
+          can_write: boolean | null
+          created_at: string | null
+          created_by: string
+          id: string
+          path: string
+          server_id: string
+          user_id: string
+        }
+        Insert: {
+          can_delete?: boolean | null
+          can_read?: boolean | null
+          can_write?: boolean | null
+          created_at?: string | null
+          created_by: string
+          id?: string
+          path: string
+          server_id: string
+          user_id: string
+        }
+        Update: {
+          can_delete?: boolean | null
+          can_read?: boolean | null
+          can_write?: boolean | null
+          created_at?: string | null
+          created_by?: string
+          id?: string
+          path?: string
+          server_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_permissions_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "ftp_servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_profiles: {
+        Row: {
+          created_at: string | null
+          display_name: string
+          full_name: string | null
+          id: string
+          is_active: boolean | null
+          is_admin: boolean | null
+          phone: string | null
+          role: string | null
+          updated_at: string | null
+          user_id: string
+          username: string
+        }
+        Insert: {
+          created_at?: string | null
+          display_name: string
+          full_name?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_admin?: boolean | null
+          phone?: string | null
+          role?: string | null
+          updated_at?: string | null
+          user_id: string
+          username: string
+        }
+        Update: {
+          created_at?: string | null
+          display_name?: string
+          full_name?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_admin?: boolean | null
+          phone?: string | null
+          role?: string | null
+          updated_at?: string | null
+          user_id?: string
+          username?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_user_permissions: {
+        Args: { user_uuid: string; file_path: string }
+        Returns: {
+          can_read: boolean
+          can_write: boolean
+          can_delete: boolean
+        }[]
+      }
+      is_admin: {
+        Args: { user_uuid?: string }
+        Returns: boolean
+      }
     }
     Enums: {
       connection_status: "active" | "inactive" | "error"

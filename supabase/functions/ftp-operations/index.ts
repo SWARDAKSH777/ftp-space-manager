@@ -1,898 +1,411 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0'
+
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-interface FtpConnectionConfig {
-  host: string;
-  port: number;
-  username: string;
-  password: string;
-  protocol: string;
-  passive_mode: boolean;
+// Helper function to parse passive mode response
+function parsePasvResponse(response: string): { host: string; port: number } | null {
+  const match = response.match(/\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)/);
+  if (!match) return null;
+  
+  const host = `${match[1]}.${match[2]}.${match[3]}.${match[4]}`;
+  const port = parseInt(match[5]) * 256 + parseInt(match[6]);
+  return { host, port };
 }
 
-interface FtpFile {
-  name: string;
-  size: number;
-  type: 'file' | 'directory';
-  modified_at: string;
-  path: string;
-  permissions?: string;
-  owner?: string;
-  group?: string;
+// Enhanced FTP client with better connection management
+class SecureFTPClient {
+  private controlConn: Deno.Conn | null = null;
+  private config: any;
+
+  constructor(config: any) {
+    this.config = {
+      host: config.host,
+      port: config.port || 21,
+      username: config.username,
+      password: config.password,
+      passive_mode: config.passive_mode ?? true,
+      timeout: 30000
+    };
+  }
+
+  async connect(): Promise<void> {
+    try {
+      console.log(`Connecting to FTP server: ${this.config.host}:${this.config.port}`);
+      
+      this.controlConn = await Deno.connect({
+        hostname: this.config.host,
+        port: this.config.port,
+        transport: "tcp"
+      });
+
+      // Read welcome message
+      await this.readResponse();
+      
+      // Login
+      await this.sendCommand(`USER ${this.config.username}`);
+      await this.sendCommand(`PASS ${this.config.password}`);
+      
+      console.log("FTP login successful");
+    } catch (error) {
+      await this.disconnect();
+      throw new Error(`FTP connection failed: ${error.message}`);
+    }
+  }
+
+  async disconnect(): Promise<void> {
+    try {
+      if (this.controlConn) {
+        await this.sendCommand("QUIT").catch(() => {});
+        this.controlConn.close();
+        this.controlConn = null;
+      }
+    } catch (error) {
+      console.log("Error during disconnect:", error);
+    }
+  }
+
+  private async sendCommand(command: string): Promise<string> {
+    if (!this.controlConn) throw new Error("Not connected");
+    
+    console.log(`FTP Command: ${command.replace(/PASS .+/, 'PASS [hidden]')}`);
+    
+    const encoder = new TextEncoder();
+    await this.controlConn.write(encoder.encode(command + "\r\n"));
+    
+    return await this.readResponse();
+  }
+
+  private async readResponse(): Promise<string> {
+    if (!this.controlConn) throw new Error("Not connected");
+    
+    const buffer = new Uint8Array(4096);
+    let response = "";
+    
+    const timeoutId = setTimeout(() => {
+      throw new Error("FTP response timeout");
+    }, this.config.timeout);
+    
+    try {
+      while (true) {
+        const n = await this.controlConn.read(buffer);
+        if (n === null) break;
+        
+        const chunk = new TextDecoder().decode(buffer.subarray(0, n));
+        response += chunk;
+        
+        // Check if we have a complete response (ends with \r\n and starts with 3-digit code)
+        const lines = response.split('\r\n');
+        const lastCompleteLine = lines[lines.length - 2]; // -2 because last element is empty after split
+        
+        if (lastCompleteLine && /^\d{3} /.test(lastCompleteLine)) {
+          break;
+        }
+      }
+      
+      clearTimeout(timeoutId);
+      console.log(`FTP Response: ${response.trim()}`);
+      return response.trim();
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
+  }
+
+  async listFiles(path: string = "/"): Promise<any[]> {
+    try {
+      // Set binary mode
+      await this.sendCommand("TYPE I");
+      
+      let dataConn: Deno.Conn;
+      
+      if (this.config.passive_mode) {
+        // Use passive mode
+        const pasvResponse = await this.sendCommand("PASV");
+        const pasvData = parsePasvResponse(pasvResponse);
+        
+        if (!pasvData) {
+          throw new Error("Failed to parse PASV response");
+        }
+        
+        console.log(`Connecting to data port: ${pasvData.host}:${pasvData.port}`);
+        dataConn = await Deno.connect({
+          hostname: pasvData.host,
+          port: pasvData.port,
+          transport: "tcp"
+        });
+      } else {
+        throw new Error("Active mode not implemented in this version");
+      }
+
+      // Send LIST command
+      const listResponse = await this.sendCommand(`LIST ${path}`);
+      console.log(`LIST Response: ${listResponse}`);
+
+      // Read data from data connection
+      const fileListData = await this.readDataConnection(dataConn);
+      console.log(`File list data: ${fileListData}`);
+
+      // Parse the file list
+      const files = this.parseFileList(fileListData, path);
+      
+      return files;
+    } catch (error) {
+      throw new Error(`Failed to list files: ${error.message}`);
+    }
+  }
+
+  async uploadFile(fileData: any): Promise<boolean> {
+    try {
+      await this.sendCommand("TYPE I");
+      
+      let dataConn: Deno.Conn;
+      
+      if (this.config.passive_mode) {
+        const pasvResponse = await this.sendCommand("PASV");
+        const pasvData = parsePasvResponse(pasvResponse);
+        
+        if (!pasvData) {
+          throw new Error("Failed to parse PASV response");
+        }
+        
+        dataConn = await Deno.connect({
+          hostname: pasvData.host,
+          port: pasvData.port,
+          transport: "tcp"
+        });
+      } else {
+        throw new Error("Active mode not implemented");
+      }
+
+      // Start upload
+      console.log(`Uploading file to ${fileData.remotePath}`);
+      const storResponse = await this.sendCommand(`STOR ${fileData.remotePath}`);
+      
+      // Send file data
+      const fileContent = Uint8Array.from(atob(fileData.content), c => c.charCodeAt(0));
+      await dataConn.write(fileContent);
+      dataConn.close();
+      
+      // Read final response
+      await this.readResponse();
+      
+      console.log("File upload completed");
+      return true;
+    } catch (error) {
+      throw new Error(`Upload failed: ${error.message}`);
+    }
+  }
+
+  async downloadFile(remotePath: string): Promise<string> {
+    try {
+      await this.sendCommand("TYPE I");
+      
+      let dataConn: Deno.Conn;
+      
+      if (this.config.passive_mode) {
+        const pasvResponse = await this.sendCommand("PASV");
+        const pasvData = parsePasvResponse(pasvResponse);
+        
+        if (!pasvData) {
+          throw new Error("Failed to parse PASV response");
+        }
+        
+        dataConn = await Deno.connect({
+          hostname: pasvData.host,
+          port: pasvData.port,
+          transport: "tcp"
+        });
+      } else {
+        throw new Error("Active mode not implemented");
+      }
+
+      // Start download
+      await this.sendCommand(`RETR ${remotePath}`);
+      
+      // Read file data
+      const fileData = await this.readDataConnection(dataConn);
+      
+      // Read final response
+      await this.readResponse();
+      
+      return btoa(fileData);
+    } catch (error) {
+      throw new Error(`Download failed: ${error.message}`);
+    }
+  }
+
+  async deleteFile(remotePath: string): Promise<boolean> {
+    try {
+      await this.sendCommand(`DELE ${remotePath}`);
+      return true;
+    } catch (error) {
+      throw new Error(`Delete failed: ${error.message}`);
+    }
+  }
+
+  async createDirectory(remotePath: string): Promise<boolean> {
+    try {
+      await this.sendCommand(`MKD ${remotePath}`);
+      return true;
+    } catch (error) {
+      throw new Error(`Create directory failed: ${error.message}`);
+    }
+  }
+
+  private async readDataConnection(conn: Deno.Conn): Promise<string> {
+    const chunks: Uint8Array[] = [];
+    const buffer = new Uint8Array(8192);
+    
+    try {
+      while (true) {
+        const n = await conn.read(buffer);
+        if (n === null) break;
+        chunks.push(buffer.slice(0, n));
+      }
+    } finally {
+      conn.close();
+    }
+    
+    // Combine all chunks
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    
+    return new TextDecoder().decode(result);
+  }
+
+  private parseFileList(data: string, basePath: string): any[] {
+    const lines = data.split('\n').filter(line => line.trim());
+    const files: any[] = [];
+    
+    // Add parent directory entry if not at root
+    if (basePath !== '/' && basePath !== '') {
+      files.push({
+        name: '..',
+        type: 'directory',
+        size: 0,
+        modified_at: new Date().toISOString(),
+        path: basePath.split('/').slice(0, -1).join('/') || '/'
+      });
+    }
+    
+    for (const line of lines) {
+      try {
+        // Parse Unix-style listing (most common)
+        const match = line.match(/^([-dlrwx]+)\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\S+\s+\S+\s+\S+)\s+(.+)$/);
+        if (match) {
+          const [, permissions, size, dateStr, name] = match;
+          
+          // Skip current directory and parent directory entries in the raw listing
+          if (name === '.' || name === '..') continue;
+          
+          const isDirectory = permissions.startsWith('d');
+          const filePath = basePath === '/' ? `/${name}` : `${basePath}/${name}`;
+          
+          files.push({
+            name: name,
+            type: isDirectory ? 'directory' : 'file',
+            size: parseInt(size) || 0,
+            modified_at: new Date().toISOString(), // Simplified for now
+            path: filePath,
+            permissions: permissions
+          });
+        }
+      } catch (error) {
+        console.warn(`Failed to parse line: ${line}`, error);
+      }
+    }
+    
+    return files;
+  }
 }
 
-Deno.serve(async (req) => {
+serve(async (req) => {
+  // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    const { action, path, fileData, config } = await req.json();
+    console.log(`FTP operation: ${action}`);
 
-    const { data: { user } } = await supabase.auth.getUser(
-      req.headers.get('Authorization')?.replace('Bearer ', '') ?? ''
-    )
-
-    if (!user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
-    }
-
-    const { action, serverId, path, config, fileData } = await req.json()
-    console.log(`FTP operation: ${action} for user ${user.id}`)
-
-    let serverConfig: FtpConnectionConfig | null = null
-    if (serverId) {
-      const { data: server } = await supabase
-        .from('ftp_servers')
-        .select('*')
-        .eq('id', serverId)
-        .eq('user_id', user.id)
-        .single()
-
-      if (!server) {
-        return new Response(JSON.stringify({ error: 'Server not found' }), {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-      }
-
-      serverConfig = {
-        host: server.host,
-        port: server.port,
-        username: server.username,
-        password: server.password,
-        protocol: server.protocol,
-        passive_mode: server.passive_mode
-      }
-    } else if (config) {
-      serverConfig = config
-    }
-
+    // Get server config from database or use provided config
+    let serverConfig = config;
+    
     if (!serverConfig) {
-      return new Response(JSON.stringify({ error: 'No server configuration provided' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      // This would be implemented to fetch from server_config table
+      // For now, we'll expect config to be provided or use defaults
+      throw new Error("Server configuration not provided");
     }
 
-    switch (action) {
-      case 'test_connection':
-        const connectionResult = await testFtpConnection(serverConfig)
-        
-        if (serverId) {
-          await supabase
-            .from('ftp_servers')
-            .update({
-              status: connectionResult.success ? 'active' : 'error',
-              last_connected: connectionResult.success ? new Date().toISOString() : null
-            })
-            .eq('id', serverId)
-
-          await supabase.from('activity_log').insert({
-            user_id: user.id,
-            server_id: serverId,
-            action: 'connection_test',
-            details: { result: connectionResult.success ? 'success' : 'failed', error: connectionResult.error }
-          })
-        }
-
-        return new Response(JSON.stringify(connectionResult), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-
-      case 'list_files':
-        const files = await listFiles(serverConfig, path || '/')
-        
-        if (serverId && files.success) {
-          await cacheFiles(supabase, serverId, files.files)
+    const ftpClient = new SecureFTPClient(serverConfig);
+    
+    try {
+      await ftpClient.connect();
+      
+      let result;
+      
+      switch (action) {
+        case 'test_connection':
+          result = { success: true, message: "Connection successful" };
+          break;
           
-          await supabase.from('activity_log').insert({
-            user_id: user.id,
-            server_id: serverId,
-            action: 'list_files',
-            details: { path: path || '/', file_count: files.files.length }
-          })
-        }
-
-        return new Response(JSON.stringify(files), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-
-      case 'upload_file':
-        const uploadResult = await uploadFile(serverConfig, fileData.localPath, fileData.remotePath, fileData.content)
-        
-        if (serverId) {
-          await supabase.from('upload_history').insert({
-            server_id: serverId,
-            file_name: fileData.fileName,
-            file_size: fileData.size,
-            local_path: fileData.localPath,
-            remote_path: fileData.remotePath,
-            status: uploadResult.success ? 'completed' : 'failed',
-            started_at: new Date().toISOString(),
-            completed_at: uploadResult.success ? new Date().toISOString() : null,
-            error_message: uploadResult.error || null
-          })
-
-          await supabase.from('activity_log').insert({
-            user_id: user.id,
-            server_id: serverId,
-            action: 'upload_file',
-            details: { 
-              file_name: fileData.fileName,
-              remote_path: fileData.remotePath,
-              result: uploadResult.success ? 'success' : 'failed',
-              error: uploadResult.error
-            }
-          })
-        }
-
-        return new Response(JSON.stringify(uploadResult), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-
-      case 'download_file':
-        const downloadResult = await downloadFile(serverConfig, path)
-        
-        if (serverId) {
-          await supabase.from('activity_log').insert({
-            user_id: user.id,
-            server_id: serverId,
-            action: 'download_file',
-            details: { 
-              file_path: path,
-              result: downloadResult.success ? 'success' : 'failed',
-              error: downloadResult.error
-            }
-          })
-        }
-
-        return new Response(JSON.stringify(downloadResult), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-
-      case 'delete_file':
-        const deleteResult = await deleteFile(serverConfig, path)
-        
-        if (serverId) {
-          await supabase.from('activity_log').insert({
-            user_id: user.id,
-            server_id: serverId,
-            action: 'delete_file',
-            details: { 
-              file_path: path,
-              result: deleteResult.success ? 'success' : 'failed',
-              error: deleteResult.error
-            }
-          })
-        }
-
-        return new Response(JSON.stringify(deleteResult), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-
-      case 'create_directory':
-        const createDirResult = await createDirectory(serverConfig, path)
-        
-        if (serverId) {
-          await supabase.from('activity_log').insert({
-            user_id: user.id,
-            server_id: serverId,
-            action: 'create_directory',
-            details: { 
-              directory_path: path,
-              result: createDirResult.success ? 'success' : 'failed',
-              error: createDirResult.error
-            }
-          })
-        }
-
-        return new Response(JSON.stringify(createDirResult), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-
-      case 'generate_statistics':
-        const statsResult = await generateStatistics(supabase, serverId, serverConfig)
-        
-        return new Response(JSON.stringify(statsResult), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-
-      default:
-        return new Response(JSON.stringify({ error: 'Invalid action' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        case 'list_files':
+          const files = await ftpClient.listFiles(path || '/');
+          result = { success: true, files };
+          break;
+          
+        case 'upload_file':
+          await ftpClient.uploadFile(fileData);
+          result = { success: true, message: "File uploaded successfully" };
+          break;
+          
+        case 'download_file':
+          const content = await ftpClient.downloadFile(path);
+          result = { success: true, content };
+          break;
+          
+        case 'delete_file':
+          await ftpClient.deleteFile(path);
+          result = { success: true, message: "File deleted successfully" };
+          break;
+          
+        case 'create_directory':
+          await ftpClient.createDirectory(path);
+          result = { success: true, message: "Directory created successfully" };
+          break;
+          
+        default:
+          throw new Error(`Unknown action: ${action}`);
+      }
+      
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+      
+    } finally {
+      await ftpClient.disconnect();
     }
+    
   } catch (error) {
-    console.error('FTP operation error:', error)
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: error.message 
+    console.error('FTP operation error:', error);
+    
+    return new Response(JSON.stringify({
+      success: false,
+      error: error.message
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    });
   }
-})
-
-async function testFtpConnection(config: FtpConnectionConfig): Promise<{ success: boolean; error?: string }> {
-  try {
-    console.log(`Testing ${config.protocol.toUpperCase()} connection to ${config.host}:${config.port}`)
-    
-    if (config.protocol === 'sftp') {
-      return await testSftpConnection(config)
-    } else {
-      return await testFtpPlainConnection(config)
-    }
-  } catch (error) {
-    console.error('Connection test failed:', error)
-    return { success: false, error: `Connection failed: ${error.message}` }
-  }
-}
-
-async function testSftpConnection(config: FtpConnectionConfig): Promise<{ success: boolean; error?: string }> {
-  let conn: Deno.TcpConn | null = null
-  
-  try {
-    conn = await Deno.connect({ 
-      hostname: config.host, 
-      port: config.port 
-    })
-    
-    const buffer = new Uint8Array(1024)
-    const bytesRead = await Promise.race([
-      conn.read(buffer),
-      new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Connection timeout')), 10000))
-    ])
-    
-    if (bytesRead && bytesRead > 0) {
-      const response = new TextDecoder().decode(buffer.slice(0, bytesRead))
-      console.log('SFTP Response:', response)
-      
-      if (response.includes('SSH-2.0') || response.includes('SSH')) {
-        return { success: true }
-      }
-    }
-    
-    return { success: false, error: 'Invalid SFTP server response' }
-  } catch (error) {
-    return { success: false, error: `SFTP connection failed: ${error.message}` }
-  } finally {
-    if (conn) {
-      try { conn.close() } catch {}
-    }
-  }
-}
-
-async function testFtpPlainConnection(config: FtpConnectionConfig): Promise<{ success: boolean; error?: string }> {
-  let conn: Deno.TcpConn | null = null
-  
-  try {
-    conn = await Deno.connect({ 
-      hostname: config.host, 
-      port: config.port 
-    })
-    
-    const buffer = new Uint8Array(1024)
-    const bytesRead = await Promise.race([
-      conn.read(buffer),
-      new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Connection timeout')), 10000))
-    ])
-    
-    if (bytesRead && bytesRead > 0) {
-      const response = new TextDecoder().decode(buffer.slice(0, bytesRead))
-      console.log('FTP Response:', response)
-      
-      if (response.startsWith('220')) {
-        // Send USER command
-        const userCmd = `USER ${config.username}\r\n`
-        await conn.write(new TextEncoder().encode(userCmd))
-        
-        const userResponse = new Uint8Array(1024)
-        const userBytesRead = await conn.read(userResponse)
-        const userResponseText = new TextDecoder().decode(userResponse.slice(0, userBytesRead || 0))
-        console.log('USER Response:', userResponseText)
-        
-        if (userResponseText.startsWith('331')) {
-          // Send PASS command
-          const passCmd = `PASS ${config.password}\r\n`
-          await conn.write(new TextEncoder().encode(passCmd))
-          
-          const passResponse = new Uint8Array(1024)
-          const passBytesRead = await conn.read(passResponse)
-          const passResponseText = new TextDecoder().decode(passResponse.slice(0, passBytesRead || 0))
-          console.log('PASS Response:', passResponseText)
-          
-          if (passResponseText.startsWith('230')) {
-            return { success: true }
-          } else {
-            return { success: false, error: 'Authentication failed' }
-          }
-        }
-      }
-    }
-    
-    return { success: false, error: 'Invalid FTP server response' }
-  } catch (error) {
-    return { success: false, error: `FTP connection failed: ${error.message}` }
-  } finally {
-    if (conn) {
-      try { conn.close() } catch {}
-    }
-  }
-}
-
-async function listFiles(config: FtpConnectionConfig, path: string): Promise<{ success: boolean; files: FtpFile[]; error?: string }> {
-  try {
-    console.log(`Listing files in ${path} on ${config.host}`)
-    
-    if (config.protocol === 'sftp') {
-      return await listFilesSftp(config, path)
-    } else {
-      return await listFilesFtp(config, path)
-    }
-  } catch (error) {
-    console.error('List files failed:', error)
-    return {
-      success: false,
-      files: [],
-      error: `Failed to list files: ${error.message}`
-    }
-  }
-}
-
-async function listFilesFtp(config: FtpConnectionConfig, path: string): Promise<{ success: boolean; files: FtpFile[]; error?: string }> {
-  let controlConn: Deno.TcpConn | null = null
-  
-  try {
-    // Create fresh control connection
-    controlConn = await Deno.connect({ 
-      hostname: config.host, 
-      port: config.port 
-    })
-    
-    // Authenticate
-    const authResult = await authenticateFtp(controlConn, config)
-    if (!authResult.success) {
-      return { success: false, files: [], error: authResult.error }
-    }
-    
-    // Set binary mode
-    await controlConn.write(new TextEncoder().encode('TYPE I\r\n'))
-    await readFtpResponse(controlConn)
-    
-    // Use PASV mode (most compatible)
-    await controlConn.write(new TextEncoder().encode('PASV\r\n'))
-    const pasvResponse = await readFtpResponse(controlConn)
-    console.log('PASV Response:', pasvResponse)
-    
-    if (!pasvResponse.startsWith('227')) {
-      return { success: false, files: [], error: 'PASV command failed: ' + pasvResponse }
-    }
-    
-    // Parse PASV response
-    const pasvMatch = pasvResponse.match(/\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)/)
-    if (!pasvMatch) {
-      return { success: false, files: [], error: 'Could not parse PASV response' }
-    }
-    
-    const dataHost = `${pasvMatch[1]}.${pasvMatch[2]}.${pasvMatch[3]}.${pasvMatch[4]}`
-    const dataPort = parseInt(pasvMatch[5]) * 256 + parseInt(pasvMatch[6])
-    
-    console.log(`Connecting to data port: ${dataHost}:${dataPort}`)
-    
-    // Create fresh data connection
-    let dataConn: Deno.TcpConn | null = null
-    try {
-      dataConn = await Promise.race([
-        Deno.connect({ hostname: dataHost, port: dataPort }),
-        new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('Data connection timeout')), 10000)
-        )
-      ])
-      
-      // Send LIST command
-      const listCmd = `LIST ${path}\r\n`
-      await controlConn.write(new TextEncoder().encode(listCmd))
-      
-      // Read file data from data connection
-      const fileData = await readAllDataFromConnection(dataConn)
-      const fileListText = new TextDecoder().decode(fileData)
-      console.log('File list data:', fileListText)
-      
-      // Close data connection immediately after reading
-      dataConn.close()
-      dataConn = null
-      
-      // Read LIST response from control connection
-      const listResponse = await readFtpResponse(controlConn)
-      console.log('LIST Response:', listResponse)
-      
-      // Parse the file list
-      const files = parseListResponse(fileListText, path)
-      
-      return {
-        success: true,
-        files: files
-      }
-    } finally {
-      if (dataConn) {
-        try { dataConn.close() } catch {}
-      }
-    }
-  } catch (error) {
-    console.error('FTP LIST failed:', error)
-    return {
-      success: false,
-      files: [],
-      error: `FTP list failed: ${error.message}`
-    }
-  } finally {
-    if (controlConn) {
-      try { controlConn.close() } catch {}
-    }
-  }
-}
-
-async function readAllDataFromConnection(conn: Deno.TcpConn): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = []
-  const buffer = new Uint8Array(4096)
-  
-  try {
-    while (true) {
-      const bytesRead = await Promise.race([
-        conn.read(buffer),
-        new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Read timeout')), 5000))
-      ])
-      
-      if (!bytesRead || bytesRead === 0) break
-      
-      chunks.push(buffer.slice(0, bytesRead))
-    }
-  } catch (error) {
-    // Connection closed, which is expected for FTP data connections
-    console.log('Data connection closed:', error.message)
-  }
-  
-  // Combine all chunks
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
-  const result = new Uint8Array(totalLength)
-  let offset = 0
-  
-  for (const chunk of chunks) {
-    result.set(chunk, offset)
-    offset += chunk.length
-  }
-  
-  return result
-}
-
-async function listFilesSftp(config: FtpConnectionConfig, path: string): Promise<{ success: boolean; files: FtpFile[]; error?: string }> {
-  return {
-    success: false,
-    files: [],
-    error: 'SFTP file listing requires SSH2 protocol implementation. Please use FTP for now.'
-  }
-}
-
-async function authenticateFtp(conn: Deno.TcpConn, config: FtpConnectionConfig): Promise<{ success: boolean; error?: string }> {
-  try {
-    // Read welcome message
-    await readFtpResponse(conn)
-    
-    // Send USER command
-    const userCmd = `USER ${config.username}\r\n`
-    await conn.write(new TextEncoder().encode(userCmd))
-    
-    const userResponse = await readFtpResponse(conn)
-    if (!userResponse.startsWith('331')) {
-      return { success: false, error: 'User command failed: ' + userResponse }
-    }
-    
-    // Send PASS command
-    const passCmd = `PASS ${config.password}\r\n`
-    await conn.write(new TextEncoder().encode(passCmd))
-    
-    const passResponse = await readFtpResponse(conn)
-    if (!passResponse.startsWith('230')) {
-      return { success: false, error: 'Authentication failed: ' + passResponse }
-    }
-    
-    return { success: true }
-  } catch (error) {
-    return { success: false, error: `Authentication failed: ${error.message}` }
-  }
-}
-
-async function readFtpResponse(conn: Deno.TcpConn): Promise<string> {
-  const buffer = new Uint8Array(1024)
-  const bytesRead = await Promise.race([
-    conn.read(buffer),
-    new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Response timeout')), 10000))
-  ])
-  return new TextDecoder().decode(buffer.slice(0, bytesRead || 0))
-}
-
-function parseListResponse(response: string, basePath: string): FtpFile[] {
-  const files: FtpFile[] = []
-  const lines = response.split('\n').filter(line => line.trim())
-  
-  // Add parent directory if not root
-  if (basePath !== '/') {
-    files.push({
-      name: '..',
-      size: 0,
-      type: 'directory',
-      modified_at: new Date().toISOString(),
-      path: basePath.split('/').slice(0, -1).join('/') || '/'
-    })
-  }
-  
-  for (const line of lines) {
-    if (line.includes('150 ') || line.includes('226 ') || line.includes('total ')) {
-      continue // Skip command responses
-    }
-    
-    // Parse Unix-style listing (most common)
-    const parts = line.trim().split(/\s+/)
-    if (parts.length >= 9) {
-      const permissions = parts[0]
-      const size = parseInt(parts[4]) || 0
-      const name = parts.slice(8).join(' ')
-      
-      if (name && name !== '.' && name !== '..') {
-        files.push({
-          name: name,
-          size: size,
-          type: permissions.startsWith('d') ? 'directory' : 'file',
-          modified_at: new Date().toISOString(),
-          path: `${basePath}/${name}`.replace('//', '/'),
-          permissions: permissions
-        })
-      }
-    }
-  }
-  
-  return files
-}
-
-async function uploadFile(config: FtpConnectionConfig, localPath: string, remotePath: string, content: string): Promise<{ success: boolean; error?: string }> {
-  let conn: Deno.TcpConn | null = null
-  let dataConn: Deno.TcpConn | null = null
-  
-  try {
-    console.log(`Uploading file to ${remotePath} on ${config.host}`)
-    
-    if (config.protocol === 'sftp') {
-      return { success: false, error: 'SFTP upload requires SSH2 protocol implementation. Please use FTP for now.' }
-    }
-    
-    conn = await Deno.connect({ 
-      hostname: config.host, 
-      port: config.port 
-    })
-    
-    // Authenticate
-    const authResult = await authenticateFtp(conn, config)
-    if (!authResult.success) {
-      return { success: false, error: authResult.error }
-    }
-    
-    // Set binary mode
-    await conn.write(new TextEncoder().encode('TYPE I\r\n'))
-    await readFtpResponse(conn)
-    
-    // Use active mode for upload
-    const listener = Deno.listen({ port: 0 })
-    const localAddr = listener.addr as Deno.NetAddr
-    const portBytes = [(localAddr.port >> 8) & 0xFF, localAddr.port & 0xFF]
-    
-    const portCmd = `PORT 127,0,0,1,${portBytes[0]},${portBytes[1]}\r\n`
-    await conn.write(new TextEncoder().encode(portCmd))
-    const portResponse = await readFtpResponse(conn)
-    console.log('PORT Response:', portResponse)
-    
-    // Send STOR command
-    const storCmd = `STOR ${remotePath}\r\n`
-    await conn.write(new TextEncoder().encode(storCmd))
-    
-    // Accept data connection
-    dataConn = await listener.accept()
-    listener.close()
-    
-    // Write file content to data connection
-    const fileBytes = new TextEncoder().encode(atob(content))
-    await dataConn.write(fileBytes)
-    dataConn.close()
-    
-    // Read STOR response
-    const storResponse = await readFtpResponse(conn)
-    console.log('STOR Response:', storResponse)
-    
-    if (storResponse.startsWith('226') || storResponse.startsWith('250')) {
-      return { success: true }
-    } else {
-      return { success: false, error: 'Upload failed - ' + storResponse }
-    }
-  } catch (error) {
-    console.error('Upload failed:', error)
-    return {
-      success: false,
-      error: `Upload failed: ${error.message}`
-    }
-  } finally {
-    if (dataConn) {
-      try { dataConn.close() } catch {}
-    }
-    if (conn) {
-      try { conn.close() } catch {}
-    }
-  }
-}
-
-async function downloadFile(config: FtpConnectionConfig, path: string): Promise<{ success: boolean; content?: string; error?: string }> {
-  let conn: Deno.TcpConn | null = null
-  let dataConn: Deno.TcpConn | null = null
-  
-  try {
-    console.log(`Downloading file from ${path} on ${config.host}`)
-    
-    if (config.protocol === 'sftp') {
-      return { success: false, error: 'SFTP download requires SSH2 protocol implementation. Please use FTP for now.' }
-    }
-    
-    conn = await Deno.connect({ 
-      hostname: config.host, 
-      port: config.port 
-    })
-    
-    // Authenticate
-    const authResult = await authenticateFtp(conn, config)
-    if (!authResult.success) {
-      return { success: false, error: authResult.error }
-    }
-    
-    // Set binary mode
-    await conn.write(new TextEncoder().encode('TYPE I\r\n'))
-    await readFtpResponse(conn)
-    
-    // Use active mode for download
-    const listener = Deno.listen({ port: 0 })
-    const localAddr = listener.addr as Deno.NetAddr
-    const portBytes = [(localAddr.port >> 8) & 0xFF, localAddr.port & 0xFF]
-    
-    const portCmd = `PORT 127,0,0,1,${portBytes[0]},${portBytes[1]}\r\n`
-    await conn.write(new TextEncoder().encode(portCmd))
-    const portResponse = await readFtpResponse(conn)
-    console.log('PORT Response:', portResponse)
-    
-    // Send RETR command
-    const retrCmd = `RETR ${path}\r\n`
-    await conn.write(new TextEncoder().encode(retrCmd))
-    
-    // Accept data connection
-    dataConn = await listener.accept()
-    listener.close()
-    
-    // Read file content from data connection
-    const fileData = await readAllData(dataConn)
-    dataConn.close()
-    
-    // Read RETR response
-    const retrResponse = await readFtpResponse(conn)
-    console.log('RETR Response:', retrResponse)
-    
-    if (retrResponse.startsWith('226') || retrResponse.startsWith('250')) {
-      return {
-        success: true,
-        content: btoa(new TextDecoder().decode(fileData))
-      }
-    } else {
-      return { success: false, error: 'Download failed - ' + retrResponse }
-    }
-  } catch (error) {
-    console.error('Download failed:', error)
-    return {
-      success: false,
-      error: `Download failed: ${error.message}`
-    }
-  } finally {
-    if (dataConn) {
-      try { dataConn.close() } catch {}
-    }
-    if (conn) {
-      try { conn.close() } catch {}
-    }
-  }
-}
-
-async function deleteFile(config: FtpConnectionConfig, path: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    console.log(`Deleting file at ${path} on ${config.host}`)
-    
-    if (config.protocol === 'sftp') {
-      return { success: false, error: 'SFTP delete requires SSH2 protocol implementation. Please use FTP for now.' }
-    }
-    
-    const conn = await Deno.connect({ 
-      hostname: config.host, 
-      port: config.port 
-    })
-    
-    // Authenticate
-    const authResult = await authenticateFtp(conn, config)
-    if (!authResult.success) {
-      conn.close()
-      return { success: false, error: authResult.error }
-    }
-    
-    // Send DELE command
-    const deleCmd = `DELE ${path}\r\n`
-    await conn.write(new TextEncoder().encode(deleCmd))
-    
-    const deleResponse = await readFtpResponse(conn)
-    console.log('DELE Response:', deleResponse)
-    
-    conn.close()
-    
-    if (deleResponse.startsWith('250')) {
-      return { success: true }
-    } else {
-      return { success: false, error: 'Delete command failed' }
-    }
-  } catch (error) {
-    console.error('Delete failed:', error)
-    return {
-      success: false,
-      error: `Delete failed: ${error.message}`
-    }
-  }
-}
-
-async function createDirectory(config: FtpConnectionConfig, path: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    console.log(`Creating directory at ${path} on ${config.host}`)
-    
-    if (config.protocol === 'sftp') {
-      return { success: false, error: 'SFTP mkdir requires SSH2 protocol implementation. Please use FTP for now.' }
-    }
-    
-    const conn = await Deno.connect({ 
-      hostname: config.host, 
-      port: config.port 
-    })
-    
-    // Authenticate
-    const authResult = await authenticateFtp(conn, config)
-    if (!authResult.success) {
-      conn.close()
-      return { success: false, error: authResult.error }
-    }
-    
-    // Send MKD command
-    const mkdCmd = `MKD ${path}\r\n`
-    await conn.write(new TextEncoder().encode(mkdCmd))
-    
-    const mkdResponse = await readFtpResponse(conn)
-    console.log('MKD Response:', mkdResponse)
-    
-    conn.close()
-    
-    if (mkdResponse.startsWith('257')) {
-      return { success: true }
-    } else {
-      return { success: false, error: 'Directory creation failed' }
-    }
-  } catch (error) {
-    console.error('Create directory failed:', error)
-    return {
-      success: false,
-      error: `Directory creation failed: ${error.message}`
-    }
-  }
-}
-
-async function generateStatistics(supabase: any, serverId: string, config: FtpConnectionConfig): Promise<{ success: boolean; error?: string }> {
-  try {
-    const files = await listFiles(config, '/')
-    
-    if (!files.success) {
-      return { success: false, error: files.error }
-    }
-    
-    const fileStats = files.files.filter(f => f.type === 'file')
-    const dirStats = files.files.filter(f => f.type === 'directory')
-    
-    const stats = {
-      total_files: fileStats.length,
-      total_directories: dirStats.length,
-      total_size: fileStats.reduce((sum, f) => sum + f.size, 0),
-      file_types: {} as Record<string, number>,
-      size_distribution: {
-        '<1MB': 0,
-        '1-10MB': 0,
-        '10-100MB': 0,
-        '>100MB': 0
-      }
-    }
-    
-    fileStats.forEach(file => {
-      const ext = file.name.split('.').pop()?.toLowerCase() || 'unknown'
-      stats.file_types[ext] = (stats.file_types[ext] || 0) + 1
-      
-      if (file.size < 1024 * 1024) {
-        stats.size_distribution['<1MB']++
-      } else if (file.size < 10 * 1024 * 1024) {
-        stats.size_distribution['1-10MB']++
-      } else if (file.size < 100 * 1024 * 1024) {
-        stats.size_distribution['10-100MB']++
-      } else {
-        stats.size_distribution['>100MB']++
-      }
-    })
-    
-    await supabase.from('server_statistics').upsert({
-      server_id: serverId,
-      ...stats,
-      last_scan: new Date().toISOString()
-    })
-    
-    return { success: true }
-  } catch (error) {
-    console.error('Statistics generation failed:', error)
-    return { success: false, error: `Statistics generation failed: ${error.message}` }
-  }
-}
-
-async function cacheFiles(supabase: any, serverId: string, files: FtpFile[]) {
-  try {
-    await supabase.from('file_cache').delete().eq('server_id', serverId)
-    
-    const cacheEntries = files.map(file => ({
-      server_id: serverId,
-      path: file.path,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      modified_at: file.modified_at,
-      cached_at: new Date().toISOString()
-    }))
-    
-    if (cacheEntries.length > 0) {
-      await supabase.from('file_cache').insert(cacheEntries)
-    }
-  } catch (error) {
-    console.error('Failed to cache files:', error)
-  }
-}
+});
