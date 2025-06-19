@@ -27,7 +27,7 @@ interface FilePermission {
   user_profiles: {
     username: string;
     full_name: string;
-  };
+  } | null;
 }
 
 interface User {
@@ -56,25 +56,52 @@ const AdminPanel = () => {
 
   const fetchData = async () => {
     try {
-      // Fetch users
+      // Fetch users - map user_id to id for interface compatibility
       const { data: usersData, error: usersError } = await supabase
         .from('user_profiles')
         .select('user_id, username, full_name, is_admin');
 
       if (usersError) throw usersError;
 
-      // Fetch permissions with user info
+      // Transform the data to match our User interface
+      const transformedUsers = usersData?.map(user => ({
+        id: user.user_id,
+        username: user.username,
+        full_name: user.full_name || '',
+        is_admin: user.is_admin || false
+      })) || [];
+
+      // Fetch permissions with user info using a proper join
       const { data: permissionsData, error: permissionsError } = await supabase
         .from('file_permissions')
         .select(`
-          *,
-          user_profiles!inner(username, full_name)
+          id,
+          user_id,
+          path,
+          can_read,
+          can_write,
+          can_delete,
+          created_at,
+          updated_at,
+          granted_by
         `);
 
       if (permissionsError) throw permissionsError;
 
-      setUsers(usersData || []);
-      setPermissions(permissionsData || []);
+      // Manually join with user profiles data
+      const permissionsWithProfiles = permissionsData?.map(permission => {
+        const userProfile = transformedUsers.find(user => user.id === permission.user_id);
+        return {
+          ...permission,
+          user_profiles: userProfile ? {
+            username: userProfile.username,
+            full_name: userProfile.full_name
+          } : null
+        };
+      }) || [];
+
+      setUsers(transformedUsers);
+      setPermissions(permissionsWithProfiles);
     } catch (error: any) {
       toast({
         title: "Failed to fetch data",
@@ -304,8 +331,12 @@ const AdminPanel = () => {
                 <div key={permission.id} className="flex items-center justify-between p-4 border rounded-lg">
                   <div className="flex-1">
                     <div className="flex items-center space-x-2 mb-2">
-                      <span className="font-medium">{permission.user_profiles.full_name}</span>
-                      <span className="text-gray-500">(@{permission.user_profiles.username})</span>
+                      <span className="font-medium">
+                        {permission.user_profiles?.full_name || 'Unknown User'}
+                      </span>
+                      <span className="text-gray-500">
+                        (@{permission.user_profiles?.username || 'unknown'})
+                      </span>
                     </div>
                     <div className="text-sm text-gray-600 mb-2">
                       Path: <code className="bg-gray-100 px-1 rounded">{permission.path}</code>

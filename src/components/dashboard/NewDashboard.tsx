@@ -1,20 +1,31 @@
 
 import React, { useState } from 'react';
 import { useUserPermissions } from '@/hooks/useUserPermissions';
-import MobileSidebar from '@/components/layout/MobileSidebar';
 import DesktopSidebar from '@/components/layout/DesktopSidebar';
+import MobileSidebar from '@/components/layout/MobileSidebar';
 import NewFilesTab from '@/components/tabs/NewFilesTab';
 import StatisticsTab from '@/components/tabs/StatisticsTab';
 import HistoryTab from '@/components/tabs/HistoryTab';
 import AdminPanel from '@/components/admin/AdminPanel';
 import ServerSettings from '@/components/admin/ServerSettings';
-import { HardDrive } from 'lucide-react';
+import SettingsTab from '@/components/tabs/SettingsTab';
 
 const NewDashboard = () => {
   const [activeTab, setActiveTab] = useState('files');
-  const { isAdmin, userProfile, loading } = useUserPermissions();
+  const { isAdmin, loading } = useUserPermissions();
 
-  const renderActiveTab = () => {
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading Family Files...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const renderContent = () => {
     switch (activeTab) {
       case 'files':
         return <NewFilesTab />;
@@ -23,59 +34,33 @@ const NewDashboard = () => {
       case 'history':
         return <HistoryTab />;
       case 'admin':
-        return isAdmin ? <AdminPanel /> : <NewFilesTab />;
+        return isAdmin ? <AdminPanel /> : <div className="p-6 text-center text-gray-500">Access denied</div>;
       case 'users':
-        return isAdmin ? <AdminPanel /> : <NewFilesTab />;
+        return isAdmin ? <AdminPanel /> : <div className="p-6 text-center text-gray-500">Access denied</div>;
       case 'settings':
-        return isAdmin ? <ServerSettings /> : <NewFilesTab />;
+        return isAdmin ? <ServerSettings /> : <SettingsTab />;
       default:
         return <NewFilesTab />;
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <HardDrive className="h-12 w-12 text-blue-600 mx-auto animate-pulse mb-4" />
-          <p className="text-gray-600">Loading your family files...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Mobile Header */}
-      <div className="md:hidden bg-white border-b border-gray-200 p-4 flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <HardDrive className="h-6 w-6 text-blue-600" />
-          <h1 className="text-lg font-bold text-gray-900">Family Files</h1>
-        </div>
+    <div className="min-h-screen bg-gray-50 flex">
+      <DesktopSidebar 
+        activeTab={activeTab} 
+        onTabChange={setActiveTab} 
+        isAdmin={isAdmin}
+      />
+      
+      <div className="flex-1 flex flex-col overflow-hidden">
         <MobileSidebar 
-          activeTab={activeTab} 
-          onTabChange={setActiveTab} 
-          isAdmin={isAdmin}
-        />
-      </div>
-
-      <div className="flex">
-        <DesktopSidebar 
           activeTab={activeTab} 
           onTabChange={setActiveTab} 
           isAdmin={isAdmin}
         />
         
         <main className="flex-1 overflow-auto">
-          {/* Welcome Banner for Mobile */}
-          <div className="md:hidden bg-blue-50 border-b border-blue-100 p-4">
-            <p className="text-sm text-blue-700">
-              Welcome, {userProfile?.full_name || 'User'}! 
-              {isAdmin && <span className="ml-1 font-medium">(Administrator)</span>}
-            </p>
-          </div>
-          
-          {renderActiveTab()}
+          {renderContent()}
         </main>
       </div>
     </div>
