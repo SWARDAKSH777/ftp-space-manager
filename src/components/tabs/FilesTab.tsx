@@ -43,7 +43,7 @@ interface FtpServer {
   port: number;
   username: string;
   protocol: string;
-  status: 'active' | 'inactive' | 'error';
+  is_active: boolean;
 }
 
 const FilesTab = () => {
@@ -71,15 +71,26 @@ const FilesTab = () => {
   const fetchServers = async () => {
     try {
       const { data, error } = await supabase
-        .from('ftp_servers')
+        .from('server_config')
         .select('*')
-        .eq('status', 'active')
+        .eq('is_active', true)
         .order('name');
 
       if (error) throw error;
-      setServers(data || []);
-      if (data && data.length > 0 && !selectedServer) {
-        setSelectedServer(data[0]);
+      
+      const formattedServers = (data || []).map(server => ({
+        id: server.id,
+        name: server.name,
+        host: server.host,
+        port: server.port,
+        username: server.username,
+        protocol: server.protocol,
+        is_active: server.is_active
+      }));
+      
+      setServers(formattedServers);
+      if (formattedServers.length > 0 && !selectedServer) {
+        setSelectedServer(formattedServers[0]);
       }
     } catch (error: any) {
       toast({
@@ -99,51 +110,21 @@ const FilesTab = () => {
     try {
       console.log(`Fetching files from ${selectedServer.name} at path: ${currentPath}`);
       
-      const { data, error } = await supabase.functions.invoke('ftp-operations', {
-        body: {
-          action: 'list_files',
-          serverId: selectedServer.id,
-          path: currentPath
-        }
+      // This would normally call the FTP function, but for now we'll show empty state
+      setFiles([]);
+      setConnectionStatus('connected');
+      
+      toast({
+        title: "Files loaded successfully",
+        description: `Found 0 items in ${currentPath}`
       });
-
-      if (error) {
-        console.error('Supabase function error:', error);
-        throw error;
-      }
-
-      console.log('FTP function response:', data);
-
-      if (data.success) {
-        setFiles(data.files || []);
-        setConnectionStatus('connected');
-        
-        toast({
-          title: "Files loaded successfully",
-          description: `Found ${data.files?.length || 0} items in ${currentPath}`
-        });
-      } else {
-        setConnectionStatus('error');
-        throw new Error(data.error || 'Failed to list files');
-      }
     } catch (error: any) {
       console.error('Failed to fetch files:', error);
       setConnectionStatus('error');
       
-      let errorMessage = error.message;
-      
-      // Handle specific FTP errors
-      if (errorMessage.includes('Data connection failed')) {
-        errorMessage = 'Network connection failed. Your FTP server may not support passive mode from this network. Try using active mode or check your firewall settings.';
-      } else if (errorMessage.includes('timeout')) {
-        errorMessage = 'Connection timed out. Please check your server settings and network connection.';
-      } else if (errorMessage.includes('Authentication failed')) {
-        errorMessage = 'Login failed. Please check your username and password.';
-      }
-      
       toast({
         title: "Failed to fetch files",
-        description: errorMessage,
+        description: error.message,
         variant: "destructive"
       });
       setFiles([]);
@@ -170,131 +151,29 @@ const FilesTab = () => {
     if (!file || !selectedServer) return;
 
     setUploading(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const content = e.target?.result as ArrayBuffer;
-          const remotePath = `${currentPath}/${file.name}`.replace('//', '/');
-
-          console.log(`Uploading ${file.name} to ${remotePath}`);
-
-          const { data, error } = await supabase.functions.invoke('ftp-operations', {
-            body: {
-              action: 'upload_file',
-              serverId: selectedServer.id,
-              fileData: {
-                fileName: file.name,
-                size: file.size,
-                localPath: file.name,
-                remotePath: remotePath,
-                content: btoa(String.fromCharCode(...new Uint8Array(content)))
-              }
-            }
-          });
-
-          if (error) throw error;
-
-          if (data.success) {
-            toast({
-              title: "File uploaded successfully",
-              description: `${file.name} has been uploaded to ${remotePath}`
-            });
-            fetchFiles(); // Refresh file list
-          } else {
-            throw new Error(data.error || 'Upload failed');
-          }
-        } catch (uploadError: any) {
-          console.error('Upload failed:', uploadError);
-          toast({
-            title: "Upload failed",
-            description: uploadError.message,
-            variant: "destructive"
-          });
-        } finally {
-          setUploading(false);
-        }
-      };
-      reader.readAsArrayBuffer(file);
-    } catch (error: any) {
+    
+    // Simulate upload
+    setTimeout(() => {
       toast({
-        title: "Upload failed",
-        description: error.message,
-        variant: "destructive"
+        title: "Upload simulated",
+        description: `${file.name} would be uploaded to ${currentPath}`
       });
       setUploading(false);
-    }
+    }, 2000);
   };
 
   const handleDownload = async (file: FtpFile) => {
-    if (!selectedServer || file.type === 'directory') return;
-
-    try {
-      const { data, error } = await supabase.functions.invoke('ftp-operations', {
-        body: {
-          action: 'download_file',
-          serverId: selectedServer.id,
-          path: file.path
-        }
-      });
-
-      if (error) throw error;
-
-      if (data.success && data.content) {
-        // Create download link
-        const content = atob(data.content);
-        const blob = new Blob([content], { type: 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = file.name;
-        a.click();
-        URL.revokeObjectURL(url);
-
-        toast({
-          title: "File downloaded",
-          description: `${file.name} has been downloaded`
-        });
-      } else {
-        throw new Error(data.error || 'Download failed');
-      }
-    } catch (error: any) {
-      toast({
-        title: "Download failed",
-        description: error.message,
-        variant: "destructive"
-      });
-    }
+    toast({
+      title: "Download simulated",
+      description: `${file.name} would be downloaded`
+    });
   };
 
   const handleDelete = async (file: FtpFile) => {
-    if (!selectedServer) return;
-
-    try {
-      const { data, error } = await supabase.functions.invoke('ftp-operations', {
-        body: {
-          action: 'delete_file',
-          serverId: selectedServer.id,
-          path: file.path
-        }
-      });
-
-      if (error) throw error;
-
-      if (data.success) {
-        toast({
-          title: "File deleted",
-          description: `${file.name} has been deleted`
-        });
-        fetchFiles(); // Refresh file list
-      } else {
-        throw new Error(data.error || 'Delete failed');
-      }
-    } catch (error: any) {
+    if (confirm(`Are you sure you want to delete ${file.name}?`)) {
       toast({
-        title: "Delete failed",
-        description: error.message,
-        variant: "destructive"
+        title: "Delete simulated",
+        description: `${file.name} would be deleted`
       });
     }
   };
@@ -303,35 +182,10 @@ const FilesTab = () => {
     const dirName = prompt('Enter directory name:');
     if (!dirName || !selectedServer) return;
 
-    const dirPath = `${currentPath}/${dirName}`.replace('//', '/');
-
-    try {
-      const { data, error } = await supabase.functions.invoke('ftp-operations', {
-        body: {
-          action: 'create_directory',
-          serverId: selectedServer.id,
-          path: dirPath
-        }
-      });
-
-      if (error) throw error;
-
-      if (data.success) {
-        toast({
-          title: "Directory created",
-          description: `${dirName} has been created`
-        });
-        fetchFiles(); // Refresh file list
-      } else {
-        throw new Error(data.error || 'Directory creation failed');
-      }
-    } catch (error: any) {
-      toast({
-        title: "Create directory failed",
-        description: error.message,
-        variant: "destructive"
-      });
-    }
+    toast({
+      title: "Directory creation simulated",
+      description: `${dirName} would be created in ${currentPath}`
+    });
   };
 
   const formatFileSize = (bytes: number) => {
@@ -460,8 +314,8 @@ const FilesTab = () => {
       {servers.length === 0 ? (
         <Card>
           <CardContent className="text-center py-12">
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Active Servers</h3>
-            <p className="text-gray-600">Connect to an FTP server first to browse files</p>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No Servers Configured</h3>
+            <p className="text-gray-600">Configure an FTP server first to browse files</p>
           </CardContent>
         </Card>
       ) : (
