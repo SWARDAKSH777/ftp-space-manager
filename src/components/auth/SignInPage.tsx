@@ -20,32 +20,41 @@ const SignInPage = () => {
     setLoading(true);
 
     try {
-      // First, get the user's email from their username
-      const { data: profileData, error: profileError } = await supabase
-        .from('user_profiles')
-        .select('user_id')
-        .eq('username', username)
-        .single();
+      // Check if input is an email (contains @)
+      if (username.includes('@')) {
+        // Direct email login
+        const { error } = await supabase.auth.signInWithPassword({
+          email: username,
+          password
+        });
 
-      if (profileError || !profileData) {
-        throw new Error('Invalid username or password');
-      }
+        if (error) throw error;
+      } else {
+        // Username-based login
+        const { data: profileData, error: profileError } = await supabase
+          .from('user_profiles')
+          .select('user_id')
+          .eq('username', username)
+          .single();
 
-      // Get the user's email from auth.users
-      const { data: userData, error: userError } = await supabase.auth.admin.getUserById(profileData.user_id);
-      
-      if (userError || !userData.user?.email) {
-        throw new Error('Invalid username or password');
-      }
+        if (profileError || !profileData) {
+          throw new Error('Invalid username or password');
+        }
 
-      // Now sign in with email and password
-      const { error } = await supabase.auth.signInWithPassword({
-        email: userData.user.email,
-        password
-      });
+        // Get the user's email from auth.users using the service role
+        const { data: userData, error: userError } = await supabase.auth.admin.getUserById(profileData.user_id);
+        
+        if (userError || !userData.user?.email) {
+          throw new Error('Invalid username or password');
+        }
 
-      if (error) {
-        throw error;
+        // Sign in with email and password
+        const { error } = await supabase.auth.signInWithPassword({
+          email: userData.user.email,
+          password
+        });
+
+        if (error) throw error;
       }
 
       toast({
@@ -53,9 +62,10 @@ const SignInPage = () => {
         description: "You have been successfully signed in."
       });
     } catch (error: any) {
+      console.error('Sign in error:', error);
       toast({
         title: "Sign in failed",
-        description: error.message === 'Invalid login credentials' ? 'Invalid username or password' : error.message,
+        description: error.message === 'Invalid login credentials' ? 'Invalid username/email or password' : error.message,
         variant: "destructive"
       });
     } finally {
@@ -72,13 +82,13 @@ const SignInPage = () => {
           </div>
           <CardTitle className="text-2xl font-bold">Family Files</CardTitle>
           <CardDescription>
-            Sign in to access your family file management system
+            Sign in with your username/email and password
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSignIn} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="username">Username or Email</Label>
               <div className="relative">
                 <User className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                 <Input
@@ -87,7 +97,7 @@ const SignInPage = () => {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
-                  placeholder="Enter your username"
+                  placeholder="Enter username or email"
                   className="pl-10"
                 />
               </div>
