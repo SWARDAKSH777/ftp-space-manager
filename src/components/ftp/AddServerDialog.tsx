@@ -34,10 +34,10 @@ const AddServerDialog = ({ onServerAdded }: AddServerDialogProps) => {
 
     try {
       const { error } = await supabase
-        .from('ftp_servers')
+        .from('server_config')
         .insert([{
           ...formData,
-          user_id: (await supabase.auth.getUser()).data.user?.id
+          created_by: (await supabase.auth.getUser()).data.user?.id
         }]);
 
       if (error) throw error;
@@ -74,12 +74,12 @@ const AddServerDialog = ({ onServerAdded }: AddServerDialogProps) => {
       <DialogTrigger asChild>
         <Button>
           <Plus className="mr-2 h-4 w-4" />
-          Add FTP Server
+          Add Server
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Add New FTP Server</DialogTitle>
+          <DialogTitle>Add New Server</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
@@ -88,7 +88,7 @@ const AddServerDialog = ({ onServerAdded }: AddServerDialogProps) => {
               id="name"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              placeholder="My FTP Server"
+              placeholder="Family Server"
               required
             />
           </div>

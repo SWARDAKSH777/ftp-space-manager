@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -56,7 +55,13 @@ const HistoryTab = () => {
 
       if (error) throw error;
 
-      setActivityLog(data || []);
+      // Transform the data to match our interface
+      const transformedData: ActivityLogItem[] = (data || []).map(item => ({
+        ...item,
+        ip_address: item.ip_address as string | null
+      }));
+
+      setActivityLog(transformedData);
     } catch (error: any) {
       toast({
         title: "Failed to fetch activity log",
