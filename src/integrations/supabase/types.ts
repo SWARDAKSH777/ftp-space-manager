@@ -12,83 +12,54 @@ export type Database = {
       activity_log: {
         Row: {
           action: string
-          created_at: string | null
+          created_at: string
           details: Json | null
           id: string
           ip_address: unknown | null
-          server_id: string | null
           user_id: string
         }
         Insert: {
           action: string
-          created_at?: string | null
+          created_at?: string
           details?: Json | null
           id?: string
           ip_address?: unknown | null
-          server_id?: string | null
           user_id: string
         }
         Update: {
           action?: string
-          created_at?: string | null
+          created_at?: string
           details?: Json | null
           id?: string
           ip_address?: unknown | null
-          server_id?: string | null
           user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "activity_log_server_id_fkey"
-            columns: ["server_id"]
-            isOneToOne: false
-            referencedRelation: "ftp_servers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      admin_settings: {
-        Row: {
-          description: string | null
-          id: string
-          key: string
-          updated_at: string | null
-          updated_by: string
-          value: Json
-        }
-        Insert: {
-          description?: string | null
-          id?: string
-          key: string
-          updated_at?: string | null
-          updated_by: string
-          value: Json
-        }
-        Update: {
-          description?: string | null
-          id?: string
-          key?: string
-          updated_at?: string | null
-          updated_by?: string
-          value?: Json
         }
         Relationships: []
       }
       admin_users: {
         Row: {
+          created_at: string
+          created_by: string | null
+          id: string
           user_id: string
         }
         Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
           user_id: string
         }
         Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
           user_id?: string
         }
         Relationships: []
       }
       file_cache: {
         Row: {
-          cached_at: string | null
+          cached_at: string
           id: string
           mime_type: string | null
           modified_at: string | null
@@ -101,7 +72,7 @@ export type Database = {
           type: Database["public"]["Enums"]["file_type"]
         }
         Insert: {
-          cached_at?: string | null
+          cached_at?: string
           id?: string
           mime_type?: string | null
           modified_at?: string | null
@@ -114,7 +85,7 @@ export type Database = {
           type: Database["public"]["Enums"]["file_type"]
         }
         Update: {
-          cached_at?: string | null
+          cached_at?: string
           id?: string
           mime_type?: string | null
           modified_at?: string | null
@@ -131,369 +102,123 @@ export type Database = {
             foreignKeyName: "file_cache_server_id_fkey"
             columns: ["server_id"]
             isOneToOne: false
-            referencedRelation: "ftp_servers"
+            referencedRelation: "server_config"
             referencedColumns: ["id"]
           },
         ]
       }
       file_permissions: {
         Row: {
-          can_delete: boolean | null
-          can_read: boolean | null
-          can_write: boolean | null
-          created_at: string | null
+          can_delete: boolean
+          can_read: boolean
+          can_write: boolean
+          created_at: string
           granted_by: string
           id: string
           path: string
-          updated_at: string | null
+          updated_at: string
           user_id: string
         }
         Insert: {
-          can_delete?: boolean | null
-          can_read?: boolean | null
-          can_write?: boolean | null
-          created_at?: string | null
+          can_delete?: boolean
+          can_read?: boolean
+          can_write?: boolean
+          created_at?: string
           granted_by: string
           id?: string
           path: string
-          updated_at?: string | null
+          updated_at?: string
           user_id: string
         }
         Update: {
-          can_delete?: boolean | null
-          can_read?: boolean | null
-          can_write?: boolean | null
-          created_at?: string | null
+          can_delete?: boolean
+          can_read?: boolean
+          can_write?: boolean
+          created_at?: string
           granted_by?: string
           id?: string
           path?: string
-          updated_at?: string | null
+          updated_at?: string
           user_id?: string
-        }
-        Relationships: []
-      }
-      ftp_servers: {
-        Row: {
-          created_at: string | null
-          host: string
-          id: string
-          last_connected: string | null
-          name: string
-          passive_mode: boolean | null
-          password: string
-          port: number | null
-          protocol: string | null
-          status: Database["public"]["Enums"]["connection_status"] | null
-          updated_at: string | null
-          user_id: string
-          username: string
-        }
-        Insert: {
-          created_at?: string | null
-          host: string
-          id?: string
-          last_connected?: string | null
-          name: string
-          passive_mode?: boolean | null
-          password: string
-          port?: number | null
-          protocol?: string | null
-          status?: Database["public"]["Enums"]["connection_status"] | null
-          updated_at?: string | null
-          user_id: string
-          username: string
-        }
-        Update: {
-          created_at?: string | null
-          host?: string
-          id?: string
-          last_connected?: string | null
-          name?: string
-          passive_mode?: boolean | null
-          password?: string
-          port?: number | null
-          protocol?: string | null
-          status?: Database["public"]["Enums"]["connection_status"] | null
-          updated_at?: string | null
-          user_id?: string
-          username?: string
         }
         Relationships: []
       }
       server_config: {
         Row: {
-          created_at: string | null
+          created_at: string
           created_by: string
           host: string
           id: string
-          is_active: boolean | null
+          is_active: boolean
           name: string
-          passive_mode: boolean | null
+          passive_mode: boolean
           password: string
-          port: number | null
-          protocol: string | null
-          updated_at: string | null
+          port: number
+          protocol: string
+          updated_at: string
           username: string
         }
         Insert: {
-          created_at?: string | null
+          created_at?: string
           created_by: string
           host: string
           id?: string
-          is_active?: boolean | null
+          is_active?: boolean
           name?: string
-          passive_mode?: boolean | null
+          passive_mode?: boolean
           password: string
-          port?: number | null
-          protocol?: string | null
-          updated_at?: string | null
+          port?: number
+          protocol?: string
+          updated_at?: string
           username: string
         }
         Update: {
-          created_at?: string | null
+          created_at?: string
           created_by?: string
           host?: string
           id?: string
-          is_active?: boolean | null
+          is_active?: boolean
           name?: string
-          passive_mode?: boolean | null
+          passive_mode?: boolean
           password?: string
-          port?: number | null
-          protocol?: string | null
-          updated_at?: string | null
+          port?: number
+          protocol?: string
+          updated_at?: string
           username?: string
         }
         Relationships: []
       }
-      server_statistics: {
-        Row: {
-          file_types: Json | null
-          id: string
-          last_scan: string | null
-          server_id: string
-          size_distribution: Json | null
-          total_directories: number | null
-          total_files: number | null
-          total_size: number | null
-        }
-        Insert: {
-          file_types?: Json | null
-          id?: string
-          last_scan?: string | null
-          server_id: string
-          size_distribution?: Json | null
-          total_directories?: number | null
-          total_files?: number | null
-          total_size?: number | null
-        }
-        Update: {
-          file_types?: Json | null
-          id?: string
-          last_scan?: string | null
-          server_id?: string
-          size_distribution?: Json | null
-          total_directories?: number | null
-          total_files?: number | null
-          total_size?: number | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "server_statistics_server_id_fkey"
-            columns: ["server_id"]
-            isOneToOne: false
-            referencedRelation: "ftp_servers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      upload_history: {
-        Row: {
-          completed_at: string | null
-          error_message: string | null
-          file_name: string
-          file_size: number | null
-          id: string
-          local_path: string | null
-          remote_path: string
-          schedule_id: string | null
-          server_id: string
-          started_at: string | null
-          status: Database["public"]["Enums"]["upload_status"] | null
-        }
-        Insert: {
-          completed_at?: string | null
-          error_message?: string | null
-          file_name: string
-          file_size?: number | null
-          id?: string
-          local_path?: string | null
-          remote_path: string
-          schedule_id?: string | null
-          server_id: string
-          started_at?: string | null
-          status?: Database["public"]["Enums"]["upload_status"] | null
-        }
-        Update: {
-          completed_at?: string | null
-          error_message?: string | null
-          file_name?: string
-          file_size?: number | null
-          id?: string
-          local_path?: string | null
-          remote_path?: string
-          schedule_id?: string | null
-          server_id?: string
-          started_at?: string | null
-          status?: Database["public"]["Enums"]["upload_status"] | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "upload_history_schedule_id_fkey"
-            columns: ["schedule_id"]
-            isOneToOne: false
-            referencedRelation: "upload_schedules"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "upload_history_server_id_fkey"
-            columns: ["server_id"]
-            isOneToOne: false
-            referencedRelation: "ftp_servers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      upload_schedules: {
-        Row: {
-          created_at: string | null
-          id: string
-          is_active: boolean | null
-          last_run: string | null
-          local_path: string
-          name: string
-          next_run: string | null
-          remote_path: string
-          schedule_cron: string
-          server_id: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string | null
-          id?: string
-          is_active?: boolean | null
-          last_run?: string | null
-          local_path: string
-          name: string
-          next_run?: string | null
-          remote_path: string
-          schedule_cron: string
-          server_id: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string | null
-          id?: string
-          is_active?: boolean | null
-          last_run?: string | null
-          local_path?: string
-          name?: string
-          next_run?: string | null
-          remote_path?: string
-          schedule_cron?: string
-          server_id?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "upload_schedules_server_id_fkey"
-            columns: ["server_id"]
-            isOneToOne: false
-            referencedRelation: "ftp_servers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      user_permissions: {
-        Row: {
-          can_delete: boolean | null
-          can_read: boolean | null
-          can_write: boolean | null
-          created_at: string | null
-          created_by: string
-          id: string
-          path: string
-          server_id: string
-          user_id: string
-        }
-        Insert: {
-          can_delete?: boolean | null
-          can_read?: boolean | null
-          can_write?: boolean | null
-          created_at?: string | null
-          created_by: string
-          id?: string
-          path: string
-          server_id: string
-          user_id: string
-        }
-        Update: {
-          can_delete?: boolean | null
-          can_read?: boolean | null
-          can_write?: boolean | null
-          created_at?: string | null
-          created_by?: string
-          id?: string
-          path?: string
-          server_id?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "user_permissions_server_id_fkey"
-            columns: ["server_id"]
-            isOneToOne: false
-            referencedRelation: "ftp_servers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       user_profiles: {
         Row: {
-          created_at: string | null
-          display_name: string
-          full_name: string | null
+          created_at: string
+          created_by: string | null
+          full_name: string
           id: string
-          is_active: boolean | null
-          is_admin: boolean | null
-          phone: string | null
-          role: string | null
-          updated_at: string | null
+          is_active: boolean
+          is_admin: boolean
+          updated_at: string
           user_id: string
           username: string
         }
         Insert: {
-          created_at?: string | null
-          display_name: string
-          full_name?: string | null
+          created_at?: string
+          created_by?: string | null
+          full_name: string
           id?: string
-          is_active?: boolean | null
-          is_admin?: boolean | null
-          phone?: string | null
-          role?: string | null
-          updated_at?: string | null
+          is_active?: boolean
+          is_admin?: boolean
+          updated_at?: string
           user_id: string
           username: string
         }
         Update: {
-          created_at?: string | null
-          display_name?: string
-          full_name?: string | null
+          created_at?: string
+          created_by?: string | null
+          full_name?: string
           id?: string
-          is_active?: boolean | null
-          is_admin?: boolean | null
-          phone?: string | null
-          role?: string | null
-          updated_at?: string | null
+          is_active?: boolean
+          is_admin?: boolean
+          updated_at?: string
           user_id?: string
           username?: string
         }

@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from '@/components/ui/badge';
-import { Shield, Plus, Trash2, Edit2 } from 'lucide-react';
+import { Shield, Plus, Trash2 } from 'lucide-react';
 
 interface FilePermission {
   id: string;
@@ -24,14 +24,15 @@ interface FilePermission {
   can_read: boolean;
   can_write: boolean;
   can_delete: boolean;
-  user_profiles: {
+  user_profiles?: {
     username: string;
     full_name: string;
-  } | null;
+  };
 }
 
 interface User {
   id: string;
+  user_id: string;
   username: string;
   full_name: string;
   is_admin: boolean;
@@ -56,22 +57,15 @@ const AdminPanel = () => {
 
   const fetchData = async () => {
     try {
-      // Fetch users - map user_id to id for interface compatibility
+      // Fetch users
       const { data: usersData, error: usersError } = await supabase
         .from('user_profiles')
-        .select('user_id, username, full_name, is_admin');
+        .select('id, user_id, username, full_name, is_admin')
+        .eq('is_active', true);
 
       if (usersError) throw usersError;
 
-      // Transform the data to match our User interface
-      const transformedUsers = usersData?.map(user => ({
-        id: user.user_id,
-        username: user.username,
-        full_name: user.full_name || '',
-        is_admin: user.is_admin || false
-      })) || [];
-
-      // Fetch permissions with user info using a proper join
+      // Fetch permissions
       const { data: permissionsData, error: permissionsError } = await supabase
         .from('file_permissions')
         .select(`
@@ -80,27 +74,24 @@ const AdminPanel = () => {
           path,
           can_read,
           can_write,
-          can_delete,
-          created_at,
-          updated_at,
-          granted_by
+          can_delete
         `);
 
       if (permissionsError) throw permissionsError;
 
-      // Manually join with user profiles data
+      // Join permissions with user data
       const permissionsWithProfiles = permissionsData?.map(permission => {
-        const userProfile = transformedUsers.find(user => user.id === permission.user_id);
+        const userProfile = usersData?.find(user => user.user_id === permission.user_id);
         return {
           ...permission,
           user_profiles: userProfile ? {
             username: userProfile.username,
             full_name: userProfile.full_name
-          } : null
+          } : undefined
         };
       }) || [];
 
-      setUsers(transformedUsers);
+      setUsers(usersData || []);
       setPermissions(permissionsWithProfiles);
     } catch (error: any) {
       toast({
@@ -182,52 +173,6 @@ const AdminPanel = () => {
     }
   };
 
-  const toggleAdmin = async (userId: string, isCurrentlyAdmin: boolean) => {
-    try {
-      if (isCurrentlyAdmin) {
-        // Remove from admin_users
-        const { error: deleteError } = await supabase
-          .from('admin_users')
-          .delete()
-          .eq('user_id', userId);
-
-        if (deleteError) throw deleteError;
-      } else {
-        // Add to admin_users
-        const { data: userData } = await supabase.auth.getUser();
-        const { error: insertError } = await supabase
-          .from('admin_users')
-          .insert({
-            user_id: userId,
-            created_by: userData.user?.id
-          });
-
-        if (insertError) throw insertError;
-      }
-
-      // Update user_profiles
-      const { error: updateError } = await supabase
-        .from('user_profiles')
-        .update({ is_admin: !isCurrentlyAdmin })
-        .eq('user_id', userId);
-
-      if (updateError) throw updateError;
-
-      toast({
-        title: "Admin status updated",
-        description: `User ${isCurrentlyAdmin ? 'removed from' : 'added to'} admin role`
-      });
-
-      fetchData();
-    } catch (error: any) {
-      toast({
-        title: "Failed to update admin status",
-        description: error.message,
-        variant: "destructive"
-      });
-    }
-  };
-
   if (loading) {
     return (
       <div className="p-6">
@@ -243,7 +188,7 @@ const AdminPanel = () => {
     <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex items-center space-x-2">
         <Shield className="h-6 w-6 text-blue-600" />
-        <h1 className="text-2xl font-bold text-gray-900">Admin Panel</h1>
+        <h1 className="text-2xl font-bold text-gray-900">File Permissions</h1>
       </div>
 
       {/* Add New Permission */}
@@ -267,7 +212,7 @@ const AdminPanel = () => {
                 </SelectTrigger>
                 <SelectContent>
                   {users.filter(user => !user.is_admin).map((user) => (
-                    <SelectItem key={user.id} value={user.id}>
+                    <SelectItem key={user.user_id} value={user.user_id}>
                       {user.full_name} (@{user.username})
                     </SelectItem>
                   ))}
@@ -358,36 +303,6 @@ const AdminPanel = () => {
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      {/* User Management */}
-      <Card>
-        <CardHeader>
-          <CardTitle>User Management</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {users.map((user) => (
-              <div key={user.id} className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-medium">{user.full_name}</span>
-                    <span className="text-gray-500">(@{user.username})</span>
-                    {user.is_admin && <Badge>Admin</Badge>}
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Label htmlFor={`admin-${user.id}`}>Admin</Label>
-                  <Switch
-                    id={`admin-${user.id}`}
-                    checked={user.is_admin}
-                    onCheckedChange={() => toggleAdmin(user.id, user.is_admin)}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
         </CardContent>
       </Card>
     </div>

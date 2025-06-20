@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from '@/components/auth/AuthProvider';
 
 interface UserPermissions {
   can_read: boolean;
@@ -9,48 +9,16 @@ interface UserPermissions {
   can_delete: boolean;
 }
 
-interface UserProfile {
-  is_admin: boolean;
-  full_name: string;
-  username: string;
-}
-
 export const useUserPermissions = () => {
-  const { user } = useAuth();
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const { user, userProfile } = useAuth();
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (user) {
-      fetchUserProfile();
-    } else {
-      setLoading(false);
-    }
-  }, [user]);
-
-  const fetchUserProfile = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('is_admin, full_name, username')
-        .eq('user_id', user?.id)
-        .single();
-
-      if (error) throw error;
-      
-      setUserProfile(data);
-      setIsAdmin(data?.is_admin || false);
-    } catch (error) {
-      console.error('Error fetching user profile:', error);
-      setIsAdmin(false);
-    } finally {
-      setLoading(false);
-    }
-  };
+    setLoading(false);
+  }, [userProfile]);
 
   const getFilePermissions = async (path: string): Promise<UserPermissions> => {
-    if (!user || isAdmin) {
+    if (!user || userProfile?.is_admin) {
       return { can_read: true, can_write: true, can_delete: true };
     }
 
@@ -70,10 +38,10 @@ export const useUserPermissions = () => {
   };
 
   return {
-    isAdmin,
+    isAdmin: userProfile?.is_admin || false,
     userProfile,
     loading,
     getFilePermissions,
-    refreshProfile: fetchUserProfile
+    refreshProfile: () => {} // Not needed anymore as it's handled by AuthProvider
   };
 };

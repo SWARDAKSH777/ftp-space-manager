@@ -1,18 +1,19 @@
 
 import React, { useState } from 'react';
-import { useUserPermissions } from '@/hooks/useUserPermissions';
+import { useAuth } from '@/components/auth/AuthProvider';
 import DesktopSidebar from '@/components/layout/DesktopSidebar';
 import MobileSidebar from '@/components/layout/MobileSidebar';
 import NewFilesTab from '@/components/tabs/NewFilesTab';
 import StatisticsTab from '@/components/tabs/StatisticsTab';
 import HistoryTab from '@/components/tabs/HistoryTab';
 import AdminPanel from '@/components/admin/AdminPanel';
+import UserManagement from '@/components/admin/UserManagement';
 import ServerSettings from '@/components/admin/ServerSettings';
 import SettingsTab from '@/components/tabs/SettingsTab';
 
 const NewDashboard = () => {
   const [activeTab, setActiveTab] = useState('files');
-  const { isAdmin, loading } = useUserPermissions();
+  const { userProfile, loading } = useAuth();
 
   if (loading) {
     return (
@@ -25,6 +26,8 @@ const NewDashboard = () => {
     );
   }
 
+  const isAdmin = userProfile?.is_admin || false;
+
   const renderContent = () => {
     switch (activeTab) {
       case 'files':
@@ -36,7 +39,7 @@ const NewDashboard = () => {
       case 'admin':
         return isAdmin ? <AdminPanel /> : <div className="p-6 text-center text-gray-500">Access denied</div>;
       case 'users':
-        return isAdmin ? <AdminPanel /> : <div className="p-6 text-center text-gray-500">Access denied</div>;
+        return isAdmin ? <UserManagement /> : <div className="p-6 text-center text-gray-500">Access denied</div>;
       case 'settings':
         return isAdmin ? <ServerSettings /> : <SettingsTab />;
       default:
