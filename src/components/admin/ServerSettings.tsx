@@ -125,10 +125,10 @@ const ServerSettings = () => {
   };
 
   const testConnection = async () => {
-    if (!serverConfig.host) {
+    if (!serverConfig.host || !serverConfig.username || !serverConfig.password) {
       toast({
         title: "Missing configuration",
-        description: "Please fill in server details first",
+        description: "Please fill in server host, username, and password first",
         variant: "destructive"
       });
       return;
@@ -136,11 +136,6 @@ const ServerSettings = () => {
 
     setTesting(true);
     try {
-      // First save the config if it's new
-      if (!serverConfig.id) {
-        await saveServerConfig();
-      }
-
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'test_connection',
@@ -154,7 +149,10 @@ const ServerSettings = () => {
         }
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Test connection error:', error);
+        throw new Error('Failed to test connection: ' + error.message);
+      }
 
       if (data?.success) {
         toast({
@@ -298,7 +296,7 @@ const ServerSettings = () => {
             <Button 
               variant="outline"
               onClick={testConnection}
-              disabled={testing || !serverConfig.host}
+              disabled={testing || !serverConfig.host || !serverConfig.username || !serverConfig.password}
               className="flex-1 sm:flex-none"
             >
               <TestTube className="mr-2 h-4 w-4" />

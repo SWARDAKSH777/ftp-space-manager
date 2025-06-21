@@ -44,6 +44,18 @@ interface FileOperation {
   error?: string;
 }
 
+interface ServerConfig {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  protocol: string;
+  passive_mode: boolean;
+  is_active: boolean;
+}
+
 const NewFilesTab = () => {
   const [currentPath, setCurrentPath] = useState('/');
   const [files, setFiles] = useState<FtpFile[]>([]);
@@ -55,13 +67,20 @@ const NewFilesTab = () => {
     can_write: false,
     can_delete: false
   });
+  const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
   
   const { toast } = useToast();
   const { isAdmin, getFilePermissions } = useUserPermissions();
 
   useEffect(() => {
-    fetchFiles();
-  }, [currentPath]);
+    fetchServerConfig();
+  }, []);
+
+  useEffect(() => {
+    if (serverConfig) {
+      fetchFiles();
+    }
+  }, [currentPath, serverConfig]);
 
   useEffect(() => {
     if (currentPath) {
@@ -69,12 +88,56 @@ const NewFilesTab = () => {
     }
   }, [currentPath, isAdmin]);
 
+  const fetchServerConfig = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('server_config')
+        .select('*')
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error fetching server config:', error);
+        toast({
+          title: "No server configuration found",
+          description: "Please configure a server in the admin settings",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      if (!data) {
+        toast({
+          title: "No server configured",
+          description: "Please ask an admin to configure the FTP server",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      setServerConfig(data);
+    } catch (error: any) {
+      console.error('Error fetching server config:', error);
+      toast({
+        title: "Failed to fetch server configuration",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  };
+
   const checkPathPermissions = async () => {
     const permissions = await getFilePermissions(currentPath);
     setPathPermissions(permissions);
   };
 
   const fetchFiles = async () => {
+    if (!serverConfig) {
+      console.log('No server config available');
+      return;
+    }
+
     setLoading(true);
     setConnectionStatus('connecting');
     
@@ -82,7 +145,14 @@ const NewFilesTab = () => {
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'list_files',
-          path: currentPath
+          path: currentPath,
+          config: {
+            host: serverConfig.host,
+            port: serverConfig.port,
+            username: serverConfig.username,
+            password: serverConfig.password,
+            passive_mode: serverConfig.passive_mode
+          }
         }
       });
 
@@ -136,6 +206,15 @@ const NewFilesTab = () => {
       return;
     }
 
+    if (!serverConfig) {
+      toast({
+        title: "No server configuration",
+        description: "Server not configured",
+        variant: "destructive"
+      });
+      return;
+    }
+
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -169,6 +248,13 @@ const NewFilesTab = () => {
           const { data, error } = await supabase.functions.invoke('ftp-operations', {
             body: {
               action: 'upload_file',
+              config: {
+                host: serverConfig.host,
+                port: serverConfig.port,
+                username: serverConfig.username,
+                password: serverConfig.password,
+                passive_mode: serverConfig.passive_mode
+              },
               fileData: {
                 fileName: file.name,
                 size: file.size,
@@ -231,6 +317,15 @@ const NewFilesTab = () => {
       return;
     }
 
+    if (!serverConfig) {
+      toast({
+        title: "No server configuration",
+        description: "Server not configured",
+        variant: "destructive"
+      });
+      return;
+    }
+
     const operationId = Date.now().toString();
     const newOperation: FileOperation = {
       id: operationId,
@@ -255,7 +350,14 @@ const NewFilesTab = () => {
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'download_file',
-          path: file.path
+          path: file.path,
+          config: {
+            host: serverConfig.host,
+            port: serverConfig.port,
+            username: serverConfig.username,
+            password: serverConfig.password,
+            passive_mode: serverConfig.passive_mode
+          }
         }
       });
 
@@ -305,11 +407,27 @@ const NewFilesTab = () => {
       return;
     }
 
+    if (!serverConfig) {
+      toast({
+        title: "No server configuration",
+        description: "Server not configured",
+        variant: "destructive"
+      });
+      return;
+    }
+
     try {
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'delete_file',
-          path: file.path
+          path: file.path,
+          config: {
+            host: serverConfig.host,
+            port: serverConfig.port,
+            username: serverConfig.username,
+            password: serverConfig.password,
+            passive_mode: serverConfig.passive_mode
+          }
         }
       });
 
@@ -343,6 +461,15 @@ const NewFilesTab = () => {
       return;
     }
 
+    if (!serverConfig) {
+      toast({
+        title: "No server configuration",
+        description: "Server not configured",
+        variant: "destructive"
+      });
+      return;
+    }
+
     const dirName = prompt('Enter directory name:');
     if (!dirName) return;
 
@@ -352,7 +479,14 @@ const NewFilesTab = () => {
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'create_directory',
-          path: dirPath
+          path: dirPath,
+          config: {
+            host: serverConfig.host,
+            port: serverConfig.port,
+            username: serverConfig.username,
+            password: serverConfig.password,
+            passive_mode: serverConfig.passive_mode
+          }
         }
       });
 
@@ -391,7 +525,7 @@ const NewFilesTab = () => {
         return (
           <div className="flex items-center text-green-600 text-sm mb-4 p-3 bg-green-50 rounded-lg">
             <Wifi className="h-4 w-4 mr-2" />
-            Connected to Family Server
+            Connected to {serverConfig?.name || 'Server'}
           </div>
         );
       case 'error':
@@ -441,6 +575,20 @@ const NewFilesTab = () => {
       </Breadcrumb>
     );
   };
+
+  if (!serverConfig) {
+    return (
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <div className="text-center py-12">
+          <AlertCircle className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No Server Configuration</h3>
+          <p className="text-gray-600">
+            Please ask an administrator to configure the FTP server settings.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto">

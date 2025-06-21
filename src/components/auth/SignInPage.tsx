@@ -30,27 +30,33 @@ const SignInPage = () => {
 
         if (error) throw error;
       } else {
-        // Username-based login
+        // Username-based login - fixed query syntax
         const { data: profileData, error: profileError } = await supabase
           .from('user_profiles')
           .select('user_id')
           .eq('username', username)
-          .single();
+          .maybeSingle();
 
-        if (profileError || !profileData) {
+        if (profileError) {
+          console.error('Profile query error:', profileError);
           throw new Error('Invalid username or password');
         }
 
-        // Get the user's email from auth.users using the service role
-        const { data: userData, error: userError } = await supabase.auth.admin.getUserById(profileData.user_id);
+        if (!profileData) {
+          throw new Error('Invalid username or password');
+        }
+
+        // Get the user's email from the auth.users table
+        const { data: { user }, error: userError } = await supabase.auth.admin.getUserById(profileData.user_id);
         
-        if (userError || !userData.user?.email) {
+        if (userError || !user?.email) {
+          console.error('User lookup error:', userError);
           throw new Error('Invalid username or password');
         }
 
         // Sign in with email and password
         const { error } = await supabase.auth.signInWithPassword({
-          email: userData.user.email,
+          email: user.email,
           password
         });
 
