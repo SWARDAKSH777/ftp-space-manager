@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -196,6 +195,66 @@ const NewFilesTab = () => {
     }
   };
 
+  const handleCreateDirectory = async () => {
+    if (!pathPermissions.can_write) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to create folders here",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (!serverConfig) {
+      toast({
+        title: "No server configuration",
+        description: "Server not configured",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const dirName = prompt('Enter directory name:');
+    if (!dirName) return;
+
+    const dirPath = `${currentPath}/${dirName}`.replace('//', '/');
+
+    try {
+      const { data, error } = await supabase.functions.invoke('ftp-operations', {
+        body: {
+          action: 'create_directory',
+          path: dirPath,
+          config: {
+            host: serverConfig.host,
+            port: serverConfig.port,
+            username: serverConfig.username,
+            password: serverConfig.password,
+            passive_mode: serverConfig.passive_mode
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        toast({
+          title: "Directory created",
+          description: `${dirName} has been created`
+        });
+        // Force refresh the file list
+        await fetchFiles();
+      } else {
+        throw new Error(data.error || 'Directory creation failed');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Create directory failed",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  };
+
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (!pathPermissions.can_write) {
       toast({
@@ -230,7 +289,6 @@ const NewFilesTab = () => {
     setFileOperations(prev => [...prev, newOperation]);
 
     try {
-      // Simulate progress for better UX
       const progressInterval = setInterval(() => {
         setFileOperations(prev => prev.map(op => 
           op.id === operationId 
@@ -281,7 +339,8 @@ const NewFilesTab = () => {
               description: `${file.name} has been uploaded`
             });
             
-            fetchFiles();
+            // Force refresh the file list
+            await fetchFiles();
           } else {
             throw new Error(data.error || 'Upload failed');
           }
@@ -303,7 +362,6 @@ const NewFilesTab = () => {
       ));
     }
 
-    // Reset file input
     event.target.value = '';
   };
 
@@ -338,7 +396,6 @@ const NewFilesTab = () => {
     setFileOperations(prev => [...prev, newOperation]);
 
     try {
-      // Simulate progress
       const progressInterval = setInterval(() => {
         setFileOperations(prev => prev.map(op => 
           op.id === operationId 
@@ -438,72 +495,14 @@ const NewFilesTab = () => {
           title: "File deleted",
           description: `${file.name} has been deleted`
         });
-        fetchFiles();
+        // Force refresh the file list
+        await fetchFiles();
       } else {
         throw new Error(data.error || 'Delete failed');
       }
     } catch (error: any) {
       toast({
         title: "Delete failed",
-        description: error.message,
-        variant: "destructive"
-      });
-    }
-  };
-
-  const handleCreateDirectory = async () => {
-    if (!pathPermissions.can_write) {
-      toast({
-        title: "Permission denied",
-        description: "You don't have permission to create folders here",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    if (!serverConfig) {
-      toast({
-        title: "No server configuration",
-        description: "Server not configured",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    const dirName = prompt('Enter directory name:');
-    if (!dirName) return;
-
-    const dirPath = `${currentPath}/${dirName}`.replace('//', '/');
-
-    try {
-      const { data, error } = await supabase.functions.invoke('ftp-operations', {
-        body: {
-          action: 'create_directory',
-          path: dirPath,
-          config: {
-            host: serverConfig.host,
-            port: serverConfig.port,
-            username: serverConfig.username,
-            password: serverConfig.password,
-            passive_mode: serverConfig.passive_mode
-          }
-        }
-      });
-
-      if (error) throw error;
-
-      if (data.success) {
-        toast({
-          title: "Directory created",
-          description: `${dirName} has been created`
-        });
-        fetchFiles();
-      } else {
-        throw new Error(data.error || 'Directory creation failed');
-      }
-    } catch (error: any) {
-      toast({
-        title: "Create directory failed",
         description: error.message,
         variant: "destructive"
       });

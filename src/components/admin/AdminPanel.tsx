@@ -4,7 +4,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -16,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from '@/components/ui/badge';
 import { Shield, Plus, Trash2 } from 'lucide-react';
+import FtpFileBrowser from './FtpFileBrowser';
 
 interface FilePermission {
   id: string;
@@ -108,7 +108,7 @@ const AdminPanel = () => {
     if (!newPermission.user_id || !newPermission.path) {
       toast({
         title: "Missing fields",
-        description: "Please select a user and enter a path",
+        description: "Please select a user and choose a path",
         variant: "destructive"
       });
       return;
@@ -219,17 +219,13 @@ const AdminPanel = () => {
                 </SelectContent>
               </Select>
             </div>
-            
-            <div>
-              <Label htmlFor="path-input">File/Folder Path</Label>
-              <Input
-                id="path-input"
-                value={newPermission.path}
-                onChange={(e) => setNewPermission(prev => ({ ...prev, path: e.target.value }))}
-                placeholder="/path/to/folder or /file.txt"
-              />
-            </div>
           </div>
+
+          {/* File Browser */}
+          <FtpFileBrowser
+            selectedPath={newPermission.path}
+            onPathSelect={(path) => setNewPermission(prev => ({ ...prev, path }))}
+          />
 
           <div className="flex flex-wrap gap-4">
             <div className="flex items-center space-x-2">

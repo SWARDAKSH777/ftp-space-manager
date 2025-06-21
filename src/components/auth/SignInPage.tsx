@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -30,7 +29,7 @@ const SignInPage = () => {
 
         if (error) throw error;
       } else {
-        // Username-based login - fixed query syntax
+        // Username-based login - use proper filter syntax
         const { data: profileData, error: profileError } = await supabase
           .from('user_profiles')
           .select('user_id')
@@ -46,17 +45,19 @@ const SignInPage = () => {
           throw new Error('Invalid username or password');
         }
 
-        // Get the user's email from the auth.users table
-        const { data: { user }, error: userError } = await supabase.auth.admin.getUserById(profileData.user_id);
-        
-        if (userError || !user?.email) {
-          console.error('User lookup error:', userError);
+        // Get the user's email from auth.users via RPC function
+        const { data, error: rpcError } = await supabase.rpc('get_user_email', {
+          user_uuid: profileData.user_id
+        });
+
+        if (rpcError || !data) {
+          console.error('User lookup error:', rpcError);
           throw new Error('Invalid username or password');
         }
 
         // Sign in with email and password
         const { error } = await supabase.auth.signInWithPassword({
-          email: user.email,
+          email: data,
           password
         });
 
