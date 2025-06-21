@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Plus, Users, Trash2, Edit2, Eye, EyeOff } from 'lucide-react';
+import { Plus, Users, Trash2, Eye, EyeOff } from 'lucide-react';
 
 interface UserProfile {
   id: string;
@@ -50,6 +50,7 @@ const UserManagement = () => {
       if (error) throw error;
       setUsers(data || []);
     } catch (error: any) {
+      console.error('Fetch users error:', error);
       toast({
         title: "Failed to fetch users",
         description: error.message,
@@ -72,26 +73,28 @@ const UserManagement = () => {
 
     setCreating(true);
     try {
-      const { data: currentUser } = await supabase.auth.getUser();
-      
-      // Create the user account
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      // Create user profile directly since we can't use admin.createUser
+      const { data: authData, error: authError } = await supabase.auth.signUp({
         email: newUser.email,
         password: newUser.password,
-        user_metadata: {
-          username: newUser.username,
-          full_name: newUser.full_name,
-          is_admin: newUser.is_admin,
-          created_by_admin: 'true',
-          created_by: currentUser.user?.id
+        options: {
+          data: {
+            username: newUser.username,
+            full_name: newUser.full_name,
+            is_admin: newUser.is_admin,
+            created_by_admin: 'true'
+          }
         }
       });
 
-      if (authError) throw authError;
+      if (authError) {
+        console.error('Auth error:', authError);
+        throw new Error(authError.message);
+      }
 
       toast({
-        title: "User created successfully",
-        description: `${newUser.full_name} has been added to the system`
+        title: "User invitation sent",
+        description: `${newUser.full_name} will receive an email to confirm their account`
       });
 
       setNewUser({
@@ -102,8 +105,13 @@ const UserManagement = () => {
         is_admin: false
       });
       setCreateDialogOpen(false);
-      fetchUsers();
+      
+      // Refresh users list after a short delay
+      setTimeout(() => {
+        fetchUsers();
+      }, 2000);
     } catch (error: any) {
+      console.error('Create user error:', error);
       toast({
         title: "Failed to create user",
         description: error.message,
@@ -130,6 +138,7 @@ const UserManagement = () => {
 
       fetchUsers();
     } catch (error: any) {
+      console.error('Toggle user status error:', error);
       toast({
         title: "Failed to update user status",
         description: error.message,
@@ -144,18 +153,22 @@ const UserManagement = () => {
     }
 
     try {
-      // Delete from auth.users (this will cascade to user_profiles)
-      const { error } = await supabase.auth.admin.deleteUser(userId);
+      // Just delete the profile, we can't delete from auth.users without service role
+      const { error } = await supabase
+        .from('user_profiles')
+        .delete()
+        .eq('user_id', userId);
 
       if (error) throw error;
 
       toast({
-        title: "User deleted",
-        description: `User ${username} has been removed from the system`
+        title: "User profile deleted",
+        description: `User profile for ${username} has been removed`
       });
 
       fetchUsers();
     } catch (error: any) {
+      console.error('Delete user error:', error);
       toast({
         title: "Failed to delete user",
         description: error.message,

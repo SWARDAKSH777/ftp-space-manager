@@ -23,7 +23,17 @@ interface ServerConfig {
 }
 
 const ServerSettings = () => {
-  const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
+  const [serverConfig, setServerConfig] = useState<ServerConfig>({
+    id: '',
+    name: 'Family Server',
+    host: '',
+    port: 21,
+    username: '',
+    password: '',
+    protocol: 'ftp',
+    passive_mode: true,
+    is_active: true
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -38,23 +48,30 @@ const ServerSettings = () => {
       const { data, error } = await supabase
         .from('server_config')
         .select('*')
-        .single();
+        .limit(1)
+        .maybeSingle();
 
-      if (error && error.code !== 'PGRST116') {
+      if (error) {
+        console.error('Error fetching server config:', error);
         throw error;
       }
 
-      setServerConfig(data);
+      if (data) {
+        setServerConfig(data);
+      }
     } catch (error: any) {
       console.error('Error fetching server config:', error);
+      toast({
+        title: "Failed to fetch server configuration",
+        description: error.message,
+        variant: "destructive"
+      });
     } finally {
       setLoading(false);
     }
   };
 
   const saveServerConfig = async () => {
-    if (!serverConfig) return;
-
     setSaving(true);
     try {
       const { data: userData } = await supabase.auth.getUser();
@@ -88,7 +105,7 @@ const ServerSettings = () => {
           .single();
 
         if (error) throw error;
-        setServerConfig({ ...serverConfig, id: data.id });
+        setServerConfig(prev => ({ ...prev, id: data.id }));
       }
 
       toast({
@@ -96,6 +113,7 @@ const ServerSettings = () => {
         description: "FTP server settings have been updated successfully"
       });
     } catch (error: any) {
+      console.error('Save error:', error);
       toast({
         title: "Failed to save configuration",
         description: error.message,
@@ -107,7 +125,14 @@ const ServerSettings = () => {
   };
 
   const testConnection = async () => {
-    if (!serverConfig) return;
+    if (!serverConfig.host) {
+      toast({
+        title: "Missing configuration",
+        description: "Please fill in server details first",
+        variant: "destructive"
+      });
+      return;
+    }
 
     setTesting(true);
     try {
@@ -131,15 +156,16 @@ const ServerSettings = () => {
 
       if (error) throw error;
 
-      if (data.success) {
+      if (data?.success) {
         toast({
           title: "Connection successful",
           description: "Successfully connected to the FTP server"
         });
       } else {
-        throw new Error(data.error || 'Connection test failed');
+        throw new Error(data?.error || 'Connection test failed');
       }
     } catch (error: any) {
+      console.error('Test connection error:', error);
       toast({
         title: "Connection failed",
         description: error.message,
@@ -151,7 +177,7 @@ const ServerSettings = () => {
   };
 
   const updateConfig = (field: keyof ServerConfig, value: any) => {
-    setServerConfig(prev => prev ? { ...prev, [field]: value } : null);
+    setServerConfig(prev => ({ ...prev, [field]: value }));
   };
 
   if (loading) {
@@ -170,7 +196,7 @@ const ServerSettings = () => {
       <div className="flex items-center space-x-2 mb-6">
         <Server className="h-6 w-6 text-blue-600" />
         <h1 className="text-2xl font-bold text-gray-900">Server Settings</h1>
-        {serverConfig?.is_active && <Badge variant="default">Active</Badge>}
+        {serverConfig.is_active && <Badge variant="default">Active</Badge>}
       </div>
 
       <Card>
@@ -183,7 +209,7 @@ const ServerSettings = () => {
               <Label htmlFor="name">Server Name</Label>
               <Input
                 id="name"
-                value={serverConfig?.name || ''}
+                value={serverConfig.name}
                 onChange={(e) => updateConfig('name', e.target.value)}
                 placeholder="Family Server"
               />
@@ -193,7 +219,7 @@ const ServerSettings = () => {
               <Label htmlFor="host">Host/IP Address</Label>
               <Input
                 id="host"
-                value={serverConfig?.host || ''}
+                value={serverConfig.host}
                 onChange={(e) => updateConfig('host', e.target.value)}
                 placeholder="ftp.example.com"
               />
@@ -204,8 +230,8 @@ const ServerSettings = () => {
               <Input
                 id="port"
                 type="number"
-                value={serverConfig?.port || 21}
-                onChange={(e) => updateConfig('port', parseInt(e.target.value))}
+                value={serverConfig.port}
+                onChange={(e) => updateConfig('port', parseInt(e.target.value) || 21)}
               />
             </div>
             
@@ -213,7 +239,7 @@ const ServerSettings = () => {
               <Label htmlFor="protocol">Protocol</Label>
               <Input
                 id="protocol"
-                value={serverConfig?.protocol || 'ftp'}
+                value={serverConfig.protocol}
                 onChange={(e) => updateConfig('protocol', e.target.value)}
                 placeholder="ftp"
               />
@@ -223,7 +249,7 @@ const ServerSettings = () => {
               <Label htmlFor="username">Username</Label>
               <Input
                 id="username"
-                value={serverConfig?.username || ''}
+                value={serverConfig.username}
                 onChange={(e) => updateConfig('username', e.target.value)}
                 placeholder="FTP Username"
               />
@@ -234,7 +260,7 @@ const ServerSettings = () => {
               <Input
                 id="password"
                 type="password"
-                value={serverConfig?.password || ''}
+                value={serverConfig.password}
                 onChange={(e) => updateConfig('password', e.target.value)}
                 placeholder="FTP Password"
               />
@@ -244,7 +270,7 @@ const ServerSettings = () => {
           <div className="flex flex-wrap gap-6">
             <div className="flex items-center space-x-2">
               <Switch
-                checked={serverConfig?.passive_mode || false}
+                checked={serverConfig.passive_mode}
                 onCheckedChange={(checked) => updateConfig('passive_mode', checked)}
               />
               <Label>Passive Mode</Label>
@@ -252,7 +278,7 @@ const ServerSettings = () => {
             
             <div className="flex items-center space-x-2">
               <Switch
-                checked={serverConfig?.is_active || false}
+                checked={serverConfig.is_active}
                 onCheckedChange={(checked) => updateConfig('is_active', checked)}
               />
               <Label>Server Active</Label>
@@ -262,7 +288,7 @@ const ServerSettings = () => {
           <div className="flex flex-col sm:flex-row gap-3">
             <Button 
               onClick={saveServerConfig} 
-              disabled={saving || !serverConfig?.host}
+              disabled={saving || !serverConfig.host}
               className="flex-1 sm:flex-none"
             >
               <Save className="mr-2 h-4 w-4" />
@@ -272,7 +298,7 @@ const ServerSettings = () => {
             <Button 
               variant="outline"
               onClick={testConnection}
-              disabled={testing || !serverConfig?.host}
+              disabled={testing || !serverConfig.host}
               className="flex-1 sm:flex-none"
             >
               <TestTube className="mr-2 h-4 w-4" />
