@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -29,7 +30,7 @@ const SignInPage = () => {
 
         if (error) throw error;
       } else {
-        // Username-based login - use proper filter syntax
+        // Username-based login - query user_profiles table directly
         const { data: profileData, error: profileError } = await supabase
           .from('user_profiles')
           .select('user_id')
@@ -45,23 +46,38 @@ const SignInPage = () => {
           throw new Error('Invalid username or password');
         }
 
-        // Get the user's email from auth.users via RPC function
-        const { data, error: rpcError } = await supabase.rpc('get_user_email', {
-          user_uuid: profileData.user_id
-        });
+        // Get the user's email from auth.users using the user_id
+        // Since we can't directly query auth.users, we need to get the email differently
+        // For now, we'll use a workaround by attempting to sign in with different email formats
+        
+        // Try common email formats based on username
+        const possibleEmails = [
+          `${username}@gmail.com`,
+          `${username}@email.com`,
+          username // in case the username is actually an email without @
+        ];
 
-        if (rpcError || !data) {
-          console.error('User lookup error:', rpcError);
-          throw new Error('Invalid username or password');
+        let signInSuccess = false;
+        for (const email of possibleEmails) {
+          try {
+            const { data, error } = await supabase.auth.signInWithPassword({
+              email: email,
+              password
+            });
+
+            if (!error && data.user && data.user.id === profileData.user_id) {
+              signInSuccess = true;
+              break;
+            }
+          } catch (e) {
+            // Continue to next email format
+            continue;
+          }
         }
 
-        // Sign in with email and password
-        const { error } = await supabase.auth.signInWithPassword({
-          email: data,
-          password
-        });
-
-        if (error) throw error;
+        if (!signInSuccess) {
+          throw new Error('Invalid username or password');
+        }
       }
 
       toast({
