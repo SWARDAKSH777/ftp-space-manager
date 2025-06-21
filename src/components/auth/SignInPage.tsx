@@ -46,36 +46,22 @@ const SignInPage = () => {
           throw new Error('Invalid username or password');
         }
 
-        // Get the user's email from auth.users using the user_id
-        // Since we can't directly query auth.users, we need to get the email differently
-        // For now, we'll use a workaround by attempting to sign in with different email formats
-        
-        // Try common email formats based on username
-        const possibleEmails = [
-          `${username}@gmail.com`,
-          `${username}@email.com`,
-          username // in case the username is actually an email without @
-        ];
+        // Get the user's email using the new function
+        const { data: emailData, error: emailError } = await supabase
+          .rpc('get_user_email', { user_uuid: profileData.user_id });
 
-        let signInSuccess = false;
-        for (const email of possibleEmails) {
-          try {
-            const { data, error } = await supabase.auth.signInWithPassword({
-              email: email,
-              password
-            });
-
-            if (!error && data.user && data.user.id === profileData.user_id) {
-              signInSuccess = true;
-              break;
-            }
-          } catch (e) {
-            // Continue to next email format
-            continue;
-          }
+        if (emailError || !emailData) {
+          console.error('Email query error:', emailError);
+          throw new Error('Invalid username or password');
         }
 
-        if (!signInSuccess) {
+        // Now sign in with the email
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: emailData,
+          password
+        });
+
+        if (signInError) {
           throw new Error('Invalid username or password');
         }
       }

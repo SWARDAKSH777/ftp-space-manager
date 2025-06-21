@@ -229,6 +229,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_user_email: {
+        Args: { user_uuid: string }
+        Returns: string
+      }
       get_user_permissions: {
         Args: { user_uuid: string; file_path: string }
         Returns: {
