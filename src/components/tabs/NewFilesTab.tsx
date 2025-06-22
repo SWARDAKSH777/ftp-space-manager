@@ -141,6 +141,8 @@ const NewFilesTab = () => {
     setConnectionStatus('connecting');
     
     try {
+      console.log('Fetching files from server...');
+      
       const { data, error } = await supabase.functions.invoke('ftp-operations', {
         body: {
           action: 'list_files',
@@ -155,20 +157,23 @@ const NewFilesTab = () => {
         }
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase function error:', error);
+        throw error;
+      }
 
-      if (data.success) {
+      if (data?.success) {
         const filteredFiles = data.files.filter((file: FtpFile) => {
-          // For non-admins, only show files they have permission to see
           if (isAdmin) return true;
           return pathPermissions.can_read;
         });
         
         setFiles(filteredFiles || []);
         setConnectionStatus('connected');
+        console.log('Files fetched successfully:', filteredFiles?.length || 0);
       } else {
         setConnectionStatus('error');
-        throw new Error(data.error || 'Failed to list files');
+        throw new Error(data?.error || 'Failed to list files');
       }
     } catch (error: any) {
       console.error('Failed to fetch files:', error);
@@ -241,7 +246,6 @@ const NewFilesTab = () => {
           title: "Directory created",
           description: `${dirName} has been created`
         });
-        // Force refresh the file list
         await fetchFiles();
       } else {
         throw new Error(data.error || 'Directory creation failed');
@@ -289,79 +293,96 @@ const NewFilesTab = () => {
     setFileOperations(prev => [...prev, newOperation]);
 
     try {
-      const progressInterval = setInterval(() => {
-        setFileOperations(prev => prev.map(op => 
-          op.id === operationId 
-            ? { ...op, progress: Math.min(op.progress + 10, 90) }
-            : op
-        ));
-      }, 200);
-
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const content = e.target?.result as ArrayBuffer;
-          const remotePath = `${currentPath}/${file.name}`.replace('//', '/');
-
-          const { data, error } = await supabase.functions.invoke('ftp-operations', {
-            body: {
-              action: 'upload_file',
-              config: {
-                host: serverConfig.host,
-                port: serverConfig.port,
-                username: serverConfig.username,
-                password: serverConfig.password,
-                passive_mode: serverConfig.passive_mode
-              },
-              fileData: {
-                fileName: file.name,
-                size: file.size,
-                localPath: file.name,
-                remotePath: remotePath,
-                content: btoa(String.fromCharCode(...new Uint8Array(content)))
-              }
-            }
-          });
-
-          clearInterval(progressInterval);
-
-          if (error) throw error;
-
-          if (data.success) {
-            setFileOperations(prev => prev.map(op => 
-              op.id === operationId 
-                ? { ...op, progress: 100, status: 'completed' }
-                : op
-            ));
-            
-            toast({
-              title: "Upload successful",
-              description: `${file.name} has been uploaded`
-            });
-            
-            // Force refresh the file list
-            await fetchFiles();
-          } else {
-            throw new Error(data.error || 'Upload failed');
-          }
-        } catch (uploadError: any) {
-          clearInterval(progressInterval);
-          setFileOperations(prev => prev.map(op => 
-            op.id === operationId 
-              ? { ...op, status: 'error', error: uploadError.message }
-              : op
-          ));
-        }
-      };
-      reader.readAsArrayBuffer(file);
-    } catch (error: any) {
+      // Update progress while reading file
       setFileOperations(prev => prev.map(op => 
         op.id === operationId 
-          ? { ...op, status: 'error', error: error.message }
+          ? { ...op, progress: 25 }
           : op
       ));
+
+      // Read file content using FileReader properly to avoid recursion
+      const fileContent = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const result = e.target?.result;
+          if (typeof result === 'string') {
+            // Convert to base64 if it's a data URL
+            const base64Content = result.includes(',') ? result.split(',')[1] : btoa(result);
+            resolve(base64Content);
+          } else if (result instanceof ArrayBuffer) {
+            // Convert ArrayBuffer to base64
+            const base64Content = btoa(String.fromCharCode(...new Uint8Array(result)));
+            resolve(base64Content);
+          } else {
+            reject(new Error('Failed to read file'));
+          }
+        };
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsArrayBuffer(file); // Use ArrayBuffer to avoid string encoding issues
+      });
+
+      setFileOperations(prev => prev.map(op => 
+        op.id === operationId 
+          ? { ...op, progress: 50 }
+          : op
+      ));
+
+      const remotePath = `${currentPath}/${file.name}`.replace('//', '/');
+
+      const { data, error } = await supabase.functions.invoke('ftp-operations', {
+        body: {
+          action: 'upload_file',
+          config: {
+            host: serverConfig.host,
+            port: serverConfig.port,
+            username: serverConfig.username,
+            password: serverConfig.password,
+            passive_mode: serverConfig.passive_mode
+          },
+          fileData: {
+            fileName: file.name,
+            size: file.size,
+            localPath: file.name,
+            remotePath: remotePath,
+            content: fileContent
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        setFileOperations(prev => prev.map(op => 
+          op.id === operationId 
+            ? { ...op, progress: 100, status: 'completed' }
+            : op
+        ));
+        
+        toast({
+          title: "Upload successful",
+          description: `${file.name} has been uploaded`
+        });
+        
+        await fetchFiles();
+      } else {
+        throw new Error(data.error || 'Upload failed');
+      }
+    } catch (uploadError: any) {
+      console.error('Upload error:', uploadError);
+      setFileOperations(prev => prev.map(op => 
+        op.id === operationId 
+          ? { ...op, status: 'error', error: uploadError.message }
+          : op
+      ));
+      
+      toast({
+        title: "Upload failed",
+        description: uploadError.message,
+        variant: "destructive"
+      });
     }
 
+    // Clear the input
     event.target.value = '';
   };
 
@@ -495,7 +516,6 @@ const NewFilesTab = () => {
           title: "File deleted",
           description: `${file.name} has been deleted`
         });
-        // Force refresh the file list
         await fetchFiles();
       } else {
         throw new Error(data.error || 'Delete failed');
