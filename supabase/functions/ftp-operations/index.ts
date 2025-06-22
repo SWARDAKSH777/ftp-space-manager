@@ -21,10 +21,11 @@ function parsePasvResponse(response: string): { host: string; port: number } | n
   return { host, port };
 }
 
-// Enhanced FTP client with better connection management
+// Enhanced FTP client with better error handling and timeouts
 class SecureFTPClient {
   private controlConn: Deno.Conn | null = null;
   private config: any;
+  private isConnected = false;
 
   constructor(config: any) {
     this.config = {
@@ -33,7 +34,7 @@ class SecureFTPClient {
       username: config.username,
       password: config.password,
       passive_mode: config.passive_mode ?? true,
-      timeout: 15000 // Reduced timeout to prevent hanging
+      timeout: 30000 // Increased timeout
     };
   }
 
@@ -41,15 +42,26 @@ class SecureFTPClient {
     try {
       console.log(`Connecting to FTP server: ${this.config.host}:${this.config.port}`);
       
-      this.controlConn = await Deno.connect({
+      // Add connection timeout
+      const connectPromise = Deno.connect({
         hostname: this.config.host,
         port: this.config.port,
         transport: "tcp"
       });
 
-      // Read welcome message
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Connection timeout")), 10000);
+      });
+
+      this.controlConn = await Promise.race([connectPromise, timeoutPromise]);
+
+      // Read welcome message with timeout
       const welcome = await this.readResponse();
       console.log(`Welcome message: ${welcome}`);
+      
+      if (!welcome.startsWith('220')) {
+        throw new Error(`Unexpected welcome message: ${welcome}`);
+      }
       
       // Login
       const userResp = await this.sendCommand(`USER ${this.config.username}`);
@@ -62,6 +74,7 @@ class SecureFTPClient {
         throw new Error(`Authentication failed: ${passResp}`);
       }
       
+      this.isConnected = true;
       console.log("FTP login successful");
     } catch (error) {
       await this.disconnect();
@@ -71,35 +84,51 @@ class SecureFTPClient {
 
   async disconnect(): Promise<void> {
     try {
+      if (this.controlConn && this.isConnected) {
+        try {
+          await this.sendCommand("QUIT");
+        } catch (e) {
+          console.log("Error sending QUIT:", e);
+        }
+      }
       if (this.controlConn) {
-        await this.sendCommand("QUIT").catch(() => {});
         this.controlConn.close();
         this.controlConn = null;
       }
+      this.isConnected = false;
     } catch (error) {
       console.log("Error during disconnect:", error);
     }
   }
 
   private async sendCommand(command: string): Promise<string> {
-    if (!this.controlConn) throw new Error("Not connected");
+    if (!this.controlConn || !this.isConnected) {
+      throw new Error("Not connected to FTP server");
+    }
     
     const logCommand = command.startsWith('PASS') ? 'PASS [hidden]' : command;
     console.log(`FTP Command: ${logCommand}`);
     
-    const encoder = new TextEncoder();
-    await this.controlConn.write(encoder.encode(command + "\r\n"));
-    
-    return await this.readResponse();
+    try {
+      const encoder = new TextEncoder();
+      await this.controlConn.write(encoder.encode(command + "\r\n"));
+      
+      return await this.readResponse();
+    } catch (error) {
+      this.isConnected = false;
+      throw new Error(`Command failed: ${error.message}`);
+    }
   }
 
   private async readResponse(): Promise<string> {
-    if (!this.controlConn) throw new Error("Not connected");
+    if (!this.controlConn) {
+      throw new Error("No connection available");
+    }
     
     const buffer = new Uint8Array(4096);
     let response = "";
     let attempts = 0;
-    const maxAttempts = 10; // Prevent infinite loops
+    const maxAttempts = 20;
     
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error("Response timeout")), this.config.timeout);
@@ -114,54 +143,60 @@ class SecureFTPClient {
         
         if (result === null) {
           console.log("Connection closed by server");
+          this.isConnected = false;
           break;
         }
         
         const chunk = new TextDecoder().decode(buffer.subarray(0, result));
         response += chunk;
         
-        // Check if we have a complete response
+        // Check for complete response - look for status code followed by space or end
         const lines = response.split('\r\n');
-        
-        // Look for a line that starts with a 3-digit code followed by a space (final response)
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
+        for (const line of lines) {
           if (line && /^\d{3} /.test(line)) {
             console.log(`FTP Response: ${response.trim()}`);
             return response.trim();
           }
         }
         
-        // Prevent infinite loop
-        if (response.length > 10000) {
+        // Prevent infinite loops
+        if (response.length > 50000) {
           console.warn("Response too long, breaking");
           break;
         }
+        
+        // Small delay to prevent tight loops
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
       
       if (attempts >= maxAttempts) {
-        throw new Error("Too many read attempts, possible infinite loop");
+        throw new Error("Maximum read attempts reached");
       }
       
       console.log(`FTP Response: ${response.trim()}`);
       return response.trim();
     } catch (error) {
+      this.isConnected = false;
       if (error.message === "Response timeout") {
-        throw new Error("FTP response timeout - server may be unresponsive");
+        throw new Error("FTP server response timeout");
       }
       throw error;
     }
   }
 
   async listFiles(path: string = "/"): Promise<any[]> {
+    if (!this.isConnected) {
+      throw new Error("Not connected to FTP server");
+    }
+
+    let dataConn: Deno.Conn | null = null;
+    
     try {
       // Set binary mode
       const typeResp = await this.sendCommand("TYPE I");
       if (!typeResp.startsWith('200')) {
         throw new Error(`Failed to set binary mode: ${typeResp}`);
       }
-      
-      let dataConn: Deno.Conn;
       
       if (this.config.passive_mode) {
         // Use passive mode
@@ -176,15 +211,19 @@ class SecureFTPClient {
         }
         
         console.log(`Connecting to data port: ${pasvData.host}:${pasvData.port}`);
-        try {
-          dataConn = await Deno.connect({
-            hostname: pasvData.host,
-            port: pasvData.port,
-            transport: "tcp"
-          });
-        } catch (error) {
-          throw new Error(`Failed to connect to data port: ${error.message}`);
-        }
+        
+        // Connect to data port with timeout
+        const dataConnectPromise = Deno.connect({
+          hostname: pasvData.host,
+          port: pasvData.port,
+          transport: "tcp"
+        });
+        
+        const dataTimeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("Data connection timeout")), 10000);
+        });
+        
+        dataConn = await Promise.race([dataConnectPromise, dataTimeoutPromise]);
       } else {
         throw new Error("Active mode not implemented in this version");
       }
@@ -192,22 +231,33 @@ class SecureFTPClient {
       // Send LIST command
       const listResponse = await this.sendCommand(`LIST ${path}`);
       if (!listResponse.startsWith('150') && !listResponse.startsWith('125')) {
-        dataConn.close();
+        if (dataConn) dataConn.close();
         throw new Error(`LIST command failed: ${listResponse}`);
       }
 
       // Read data from data connection
       const fileListData = await this.readDataConnection(dataConn);
-      console.log(`File list data: ${fileListData}`);
+      console.log(`File list data received: ${fileListData.length} bytes`);
 
       // Read final response after data transfer
-      await this.readResponse();
+      const finalResp = await this.readResponse();
+      if (!finalResp.startsWith('226')) {
+        console.warn(`Unexpected final response: ${finalResp}`);
+      }
 
       // Parse the file list
       const files = this.parseFileList(fileListData, path);
+      console.log(`Parsed ${files.length} files`);
       
       return files;
     } catch (error) {
+      if (dataConn) {
+        try {
+          dataConn.close();
+        } catch (e) {
+          console.log("Error closing data connection:", e);
+        }
+      }
       throw new Error(`Failed to list files: ${error.message}`);
     }
   }
@@ -346,22 +396,37 @@ class SecureFTPClient {
     const chunks: Uint8Array[] = [];
     const buffer = new Uint8Array(8192);
     let totalBytes = 0;
-    const maxBytes = 50 * 1024 * 1024; // 50MB limit to prevent memory issues
+    const maxBytes = 50 * 1024 * 1024; // 50MB limit
     
     try {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Data read timeout")), 30000);
+      });
+      
       while (totalBytes < maxBytes) {
-        const n = await conn.read(buffer);
+        const readPromise = conn.read(buffer);
+        const n = await Promise.race([readPromise, timeoutPromise]);
+        
         if (n === null) break;
         
         chunks.push(buffer.slice(0, n));
         totalBytes += n;
+        
+        // Add small delay to prevent overwhelming
+        if (chunks.length % 100 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 1));
+        }
       }
     } finally {
-      conn.close();
+      try {
+        conn.close();
+      } catch (e) {
+        console.log("Error closing data connection:", e);
+      }
     }
     
     if (totalBytes >= maxBytes) {
-      throw new Error("File too large - exceeds 50MB limit");
+      throw new Error("File data too large - exceeds 50MB limit");
     }
     
     // Combine all chunks
@@ -382,12 +447,13 @@ class SecureFTPClient {
     
     // Add parent directory entry if not at root
     if (basePath !== '/' && basePath !== '') {
+      const parentPath = basePath.split('/').slice(0, -1).join('/') || '/';
       files.push({
         name: '..',
         type: 'directory',
         size: 0,
         modified_at: new Date().toISOString(),
-        path: basePath.split('/').slice(0, -1).join('/') || '/'
+        path: parentPath
       });
     }
     
@@ -420,6 +486,168 @@ class SecureFTPClient {
     
     return files;
   }
+
+  async uploadFile(fileData: any): Promise<boolean> {
+    if (!this.isConnected) {
+      throw new Error("Not connected to FTP server");
+    }
+
+    let dataConn: Deno.Conn | null = null;
+    
+    try {
+      const typeResp = await this.sendCommand("TYPE I");
+      if (!typeResp.startsWith('200')) {
+        throw new Error(`Failed to set binary mode: ${typeResp}`);
+      }
+      
+      if (this.config.passive_mode) {
+        const pasvResponse = await this.sendCommand("PASV");
+        if (!pasvResponse.startsWith('227')) {
+          throw new Error(`PASV command failed: ${pasvResponse}`);
+        }
+        
+        const pasvData = parsePasvResponse(pasvResponse);
+        if (!pasvData) {
+          throw new Error(`Failed to parse PASV response: ${pasvResponse}`);
+        }
+        
+        dataConn = await Deno.connect({
+          hostname: pasvData.host,
+          port: pasvData.port,
+          transport: "tcp"
+        });
+      } else {
+        throw new Error("Active mode not implemented");
+      }
+
+      // Start upload
+      console.log(`Uploading file to ${fileData.remotePath}`);
+      const storResponse = await this.sendCommand(`STOR ${fileData.remotePath}`);
+      if (!storResponse.startsWith('150') && !storResponse.startsWith('125')) {
+        if (dataConn) dataConn.close();
+        throw new Error(`STOR command failed: ${storResponse}`);
+      }
+      
+      // Send file data
+      const fileContent = Uint8Array.from(atob(fileData.content), c => c.charCodeAt(0));
+      await dataConn.write(fileContent);
+      dataConn.close();
+      dataConn = null;
+      
+      // Read final response
+      const finalResp = await this.readResponse();
+      if (!finalResp.startsWith('226')) {
+        throw new Error(`Upload failed: ${finalResp}`);
+      }
+      
+      console.log("File upload completed");
+      return true;
+    } catch (error) {
+      if (dataConn) {
+        try {
+          dataConn.close();
+        } catch (e) {
+          console.log("Error closing data connection:", e);
+        }
+      }
+      throw new Error(`Upload failed: ${error.message}`);
+    }
+  }
+
+  async downloadFile(remotePath: string): Promise<string> {
+    if (!this.isConnected) {
+      throw new Error("Not connected to FTP server");
+    }
+
+    let dataConn: Deno.Conn | null = null;
+    
+    try {
+      const typeResp = await this.sendCommand("TYPE I");
+      if (!typeResp.startsWith('200')) {
+        throw new Error(`Failed to set binary mode: ${typeResp}`);
+      }
+      
+      if (this.config.passive_mode) {
+        const pasvResponse = await this.sendCommand("PASV");
+        if (!pasvResponse.startsWith('227')) {
+          throw new Error(`PASV command failed: ${pasvResponse}`);
+        }
+        
+        const pasvData = parsePasvResponse(pasvResponse);
+        if (!pasvData) {
+          throw new Error(`Failed to parse PASV response: ${pasvData}`);
+        }
+        
+        dataConn = await Deno.connect({
+          hostname: pasvData.host,
+          port: pasvData.port,
+          transport: "tcp"
+        });
+      } else {
+        throw new Error("Active mode not implemented");
+      }
+
+      // Start download
+      const retrResponse = await this.sendCommand(`RETR ${remotePath}`);
+      if (!retrResponse.startsWith('150') && !retrResponse.startsWith('125')) {
+        if (dataConn) dataConn.close();
+        throw new Error(`RETR command failed: ${retrResponse}`);
+      }
+      
+      // Read file data
+      const fileData = await this.readDataConnection(dataConn);
+      dataConn = null;
+      
+      // Read final response
+      const finalResp = await this.readResponse();
+      if (!finalResp.startsWith('226')) {
+        throw new Error(`Download failed: ${finalResp}`);
+      }
+      
+      return btoa(fileData);
+    } catch (error) {
+      if (dataConn) {
+        try {
+          dataConn.close();
+        } catch (e) {
+          console.log("Error closing data connection:", e);
+        }
+      }
+      throw new Error(`Download failed: ${error.message}`);
+    }
+  }
+
+  async deleteFile(remotePath: string): Promise<boolean> {
+    if (!this.isConnected) {
+      throw new Error("Not connected to FTP server");
+    }
+
+    try {
+      const deleteResp = await this.sendCommand(`DELE ${remotePath}`);
+      if (!deleteResp.startsWith('250')) {
+        throw new Error(`Delete failed: ${deleteResp}`);
+      }
+      return true;
+    } catch (error) {
+      throw new Error(`Delete failed: ${error.message}`);
+    }
+  }
+
+  async createDirectory(remotePath: string): Promise<boolean> {
+    if (!this.isConnected) {
+      throw new Error("Not connected to FTP server");
+    }
+
+    try {
+      const mkdResp = await this.sendCommand(`MKD ${remotePath}`);
+      if (!mkdResp.startsWith('257')) {
+        throw new Error(`Create directory failed: ${mkdResp}`);
+      }
+      return true;
+    } catch (error) {
+      throw new Error(`Create directory failed: ${error.message}`);
+    }
+  }
 }
 
 serve(async (req) => {
@@ -438,11 +666,10 @@ serve(async (req) => {
     }
 
     const ftpClient = new SecureFTPClient(config);
+    let result;
     
     try {
       await ftpClient.connect();
-      
-      let result;
       
       switch (action) {
         case 'test_connection':
